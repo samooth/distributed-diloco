@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const net = require('net')
 const crypto = require('crypto')
 const Hypercore = require('hypercore')
 const Hyperswarm = require('hyperswarm')
@@ -21,16 +22,17 @@ function topicBuffer(topic) {
 async function announce() {
   const topic = arg('--topic', 'diloco')
   const name = arg('--name', 'node')
+  const runId = arg('--run-id', '')
   const endpoint = arg('--endpoint', '')
   const swarm = new Hyperswarm()
   const discovery = swarm.join(topicBuffer(topic), { server: true, client: true })
   swarm.on('connection', (conn, info) => {
     console.log(JSON.stringify({ event: 'peer', publicKey: info.publicKey.toString('hex'), client: info.client }))
-    conn.write(JSON.stringify({ type: 'hello', name, endpoint }) + '\n')
+    conn.write(JSON.stringify({ type: 'hello', name, runId, endpoint }) + '\n')
     conn.on('data', (data) => console.log(JSON.stringify({ event: 'message', data: data.toString().trim() })))
   })
   await discovery.flushed()
-  console.log(JSON.stringify({ event: 'ready', topic, name, endpoint, peers: swarm.connections.size }))
+  console.log(JSON.stringify({ event: 'ready', topic, name, runId, endpoint, peers: swarm.connections.size }))
   await new Promise(() => {})
 }
 
@@ -111,9 +113,83 @@ async function index() {
   await core.close()
 }
 
+async function tunnelServer() {
+  const topic = arg('--topic', 'diloco')
+  const targetHost = arg('--target-host', '127.0.0.1')
+  const targetPort = Number(arg('--target-port', '0'))
+  if (!targetPort) throw new Error('--target-port is required')
+  const swarm = new Hyperswarm()
+  const discovery = swarm.join(topicBuffer(topic), { server: true, client: false })
+  swarm.on('connection', (conn, info) => {
+    const target = net.connect(targetPort, targetHost)
+    conn.pipe(target)
+    target.pipe(conn)
+    const close = () => { try { conn.destroy() } catch {} ; try { target.destroy() } catch {} }
+    conn.on('close', close)
+    target.on('close', close)
+    conn.on('error', close)
+    target.on('error', close)
+  })
+  await discovery.flushed()
+  console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server', topic, target: `${targetHost}:${targetPort}` }))
+  await new Promise(() => {})
+}
+
+async function tunnelClient() {
+  const topic = arg('--topic', 'diloco')
+  const listenHost = arg('--listen-host', '127.0.0.1')
+  const listenPort = Number(arg('--listen-port', '0'))
+  if (!listenPort) throw new Error('--listen-port is required')
+  const server = net.createServer((socket) => {
+    const swarm = new Hyperswarm()
+    const discovery = swarm.join(topicBuffer(topic), { server: false, client: true })
+    let connected = false
+    const finish = () => {
+      try { socket.destroy() } catch {}
+      try { swarm.destroy() } catch {}
+    }
+    const timer = setTimeout(() => {
+      if (!connected) {
+        console.log(JSON.stringify({ event: 'tunnel-error', message: 'no peer connected' }))
+        finish()
+      }
+    }, 10000)
+    swarm.on('connection', (conn, info) => {
+      if (connected) return
+      connected = true
+      clearTimeout(timer)
+      socket.pipe(conn)
+      conn.pipe(socket)
+      const close = () => { try { socket.destroy() } catch {} ; try { conn.destroy() } catch {} ; try { swarm.destroy() } catch {} }
+      socket.on('close', close)
+      conn.on('close', close)
+      socket.on('error', close)
+      conn.on('error', close)
+    })
+    discovery.flushed().then(() => {
+      if (!connected) {
+        console.log(JSON.stringify({ event: 'waiting-peer', topic }))
+      }
+    }).catch((error) => {
+      console.log(JSON.stringify({ event: 'tunnel-error', message: String(error) }))
+      finish()
+    })
+  })
+  await new Promise((resolve, reject) => {
+    server.listen(listenPort, listenHost, () => {
+      console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-client', topic, listen: `${listenHost}:${listenPort}` }))
+      resolve()
+    })
+    server.on('error', reject)
+  })
+  await new Promise(() => {})
+}
+
 const mode = arg('--mode', 'announce')
 if (mode === 'announce') announce().catch((error) => { console.error(error); process.exit(1) })
 else if (mode === 'ledger') ledger().catch((error) => { console.error(error); process.exit(1) })
 else if (mode === 'share') share().catch((error) => { console.error(error); process.exit(1) })
 else if (mode === 'index') index().catch((error) => { console.error(error); process.exit(1) })
+else if (mode === 'tunnel-server') tunnelServer().catch((error) => { console.error(error); process.exit(1) })
+else if (mode === 'tunnel-client') tunnelClient().catch((error) => { console.error(error); process.exit(1) })
 else { console.error(`unknown mode: ${mode}`); process.exit(2) }

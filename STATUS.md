@@ -55,6 +55,9 @@ Tests: `22 OK`
 
 ## Implementado adicionalmente
 
+- Transporte P2P opcional con `--p2p-topic`: el coordinador publica un túnel
+  Hyperswarm y los workers se conectan a un puerto local.
+
 - Sidecar opcional Holepunch en `network/holepunch-sidecar/`.
 - Emulación WAN con `scripts/wan_emulate.py`.
 - Object store local/S3 integrado en checkpoints.
