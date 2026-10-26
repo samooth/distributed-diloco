@@ -30,7 +30,7 @@ Leyenda: `[x]` hecho, `[ ]` pendiente.
 - [x] Smoke int8 end-to-end.
 - [x] Carga thread-safe del modelo HF.
 - [x] Sparsificación top-k y error feedback implementados.
-- [ ] Barrido int8/top-k de varias rondas con 2 nodos.
+- [x] Barrido int8/top-k/error feedback de varias rondas con 2 nodos.
 - [ ] Test de signo del pseudo-gradiente.
 
 ## P2.2 — Robustez de red, nodos y transporte
@@ -38,16 +38,16 @@ Leyenda: `[x]` hecho, `[ ]` pendiente.
 - [x] Rejoin con el mismo `node_id`.
 - [x] Late join opcional (`coordinator.allow_late_join`).
 - [x] Reintento automático si una ronda queda obsoleta.
-- [ ] gRPC/HTTP2 (solo TLS opcional sobre HTTP implementado).
-- [ ] TLS/mTLS.
 - [x] Top-k y error feedback.
 - [x] Expulsión automática de workers inactivos.
 - [x] Endpoint `/v1/leave` y salida ordenada básica.
-- [ ] Tolerancia a churn.
-- [x] Retención de checkpoints (`checkpoint_retention`).
+- [x] Retención de checkpoints.
 - [x] Object store local/S3 para checkpoints.
-- [x] Script de emulación WAN (`scripts/wan_emulate.py`).
-- [ ] Object store para checkpoints grandes.
+- [x] Emulación WAN con `scripts/wan_emulate.py`.
+- [x] Transporte P2P opcional con Hyperswarm.
+- [ ] gRPC/HTTP2 real (solo TLS opcional implementado).
+- [ ] TLS/mTLS real.
+- [ ] Tolerancia a churn.
 
 ## F0 — Pipeline y equivalencia
 
@@ -64,8 +64,8 @@ Leyenda: `[x]` hecho, `[ ]` pendiente.
 - [x] Baseline centralizado con mismo presupuesto.
 - [x] F1 toy: `loss_gap=-54%`.
 - [x] F1 real float, H=10, 2 workers: `loss_gap=+5.26%`.
-- [ ] F1 int8 de varias rondas con 2 workers.
-- [ ] Barrido `H ∈ {20, 50, 100}`.
+- [x] F1 int8 de varias rondas con 2 workers.
+- [x] Barrido `H ∈ {20, 50, 100}`.
 - [ ] 3 semillas para configuraciones clave.
 - [ ] Pruebas con `tc netem`: latencia, pérdida y ancho de banda.
 - [ ] Sync fraction <= 20%.

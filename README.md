@@ -1,9 +1,10 @@
 # DiLoCo WAN: adaptación distribuida de LLMs sobre internet
 
-**Estado:** documentación v0.1 + implementación P0/P1/P2.1 (2026-10-26).
-Incluye backend toy y Hugging Face/PEFT, coordinador HTTP, checkpoints,
-reanudación, compresión int8 y late join opcional. 32B/70B reales y el
-endurecimiento P2+ siguen pendientes.
+**Estado:** documentación v0.1 + implementación P0/P1/P2.2 (2026-10-26).
+Incluye backend toy/HF, coordinador HTTP, checkpoints, reanudación, int8,
+top-k, error feedback, late join, expulsión básica, TLS opcional, object store,
+emulación WAN y transporte P2P opcional. Pilotos 32B/70B y churn completo siguen
+pendientes.
 
 Objetivo: adaptar modelos de **32B, 70B o superiores** usando varios nodos
 conectados por internet (fibra doméstica, WAN, nodos heterogéneos), sin exigir
@@ -36,19 +37,18 @@ Completado en P0/P1 y parcialmente en P2:
   Nesterov y checkpoints atómicos.
 - Reanudación desde checkpoint y exportación previa del adaptador inicial para
   que el coordinador no cargue la base de 32B/70B.
-- Smoke test de 2 workers y validación end-to-end con Qwen2.5-0.5B en CPU.
+- Smoke test de 2 workers y validación end-to-end con Qwen2.5-0.5B en CPU/GPU.
 - Baseline LoRA centralizado (`scripts/train_centralized.py`) con el mismo
   presupuesto de pasos/tokens para medir el `loss gap`.
-- Compresión int8 por tensor del delta del adaptador (`train.delta_compression`).
-- Rejoin del mismo `node_id`, late join opcional (`coordinator.allow_late_join`)
-  y reintento automático si el worker termina una ronda obsoleta.
-- Carga thread-safe del modelo HF (`_MODEL_LOAD_LOCK`) para evitar meta-tensors
-  cuando dos workers cargan el modelo a la vez en CPU.
+- Compresión int8, top-k y error feedback para deltas.
+- Rejoin, late join, salida ordenada, expulsión básica y retención de checkpoints.
+- TLS opcional, object store local/S3, emulación WAN y transporte P2P opcional.
+- Carga thread-safe del modelo HF para evitar meta-tensors con 2 workers.
 
-Límites actuales: HTTP/1.0 + token (sin TLS/mTLS), sin top-k ni error feedback,
-sin expulsión automática de nodos ni presupuesto de churn, y sin ejecución real
-de 32B/70B. La validación HF se hizo con Qwen2.5-0.5B en CPU; no sustituye a un
-piloto grande.
+Límites actuales: HTTP/1.0 + token con TLS opcional y transporte P2P opcional;
+top-k, error feedback, expulsión básica, retención y object store implementados;
+falta gRPC/mTLS real, churn completo y ejecución real de 32B/70B. La validación
+HF se hizo con Qwen2.5-0.5B; no sustituye a un piloto grande.
 
 ## Qué es viable y qué no
 
@@ -69,9 +69,9 @@ piloto grande.
 | Algoritmo | DiLoCo: AdamW interior + Nesterov exterior | Simple, probado, tolera latencia y datos no-IID |
 | Parámetros que se sincronizan | Solo adaptador LoRA/DoRA | Reduce la ronda de 140 GB a 0.07-0.8 GB en 70B |
 | Precisión de la base | NF4 con doble cuantización, congelada | 70B ≈ 35-40 GB; 32B ≈ 17-20 GB |
-| Precisión del delta | bf16/fp16 en v1; int8 implementado en P2.1 | El adaptador ya es pequeño; primero corregir, luego comprimir |
+| Precisión del delta | bf16/fp16 en v1; int8/top-k/error feedback implementados | El adaptador ya es pequeño; primero corregir, luego comprimir |
 | Topología | Estrella con coordinador para 2-4 islas; anillo/árbol para más | La estrella es simple; el coordinador se satura con muchos nodos |
-| Sincronización | Rondas síncronas con deadline y checkpoint por ronda | Fácil de razonar y recuperar; expulsión automática pendiente |
+| Sincronización | Rondas síncronas con deadline y checkpoint por ronda | Fácil de razonar y recuperar; expulsión básica implementada |
 | Nodos | Permitidos (allowlist) en v1 | La verificación de cómputo permissionless no está resuelta |
 | Stack | Python + PyTorch + Transformers + PEFT + bitsandbytes | Es el ecosistema real de QLoRA/FSDP; Zig no aporta aquí |
 | Modelo | Denso primero; MoE después | El repo ya tiene MoE, pero el routing complica la sincronización |
@@ -138,8 +138,8 @@ recomendable para cargas grandes.
   gRPC ni FastAPI.
 - P2.1 (int8) usa safetensors con tensores `int8` y una escala `fp32` por
   tensor. P2.2 añade top-k, error feedback, late join, salida ordenada,
-  expulsión básica y TLS opcional; gRPC/HTTP2 real, churn completo y object
-  store (MinIO/S3) siguen pendientes.
+  expulsión básica, TLS opcional, object store local/S3, emulación WAN y
+  transporte P2P opcional. gRPC/HTTP2 real y churn completo siguen pendientes.
 - Contenedores con versiones fijas de CUDA, PyTorch y bitsandbytes. La versión
   de bitsandbytes debe ser idéntica en todas las islas.
 
@@ -179,7 +179,7 @@ el cuello de botella pasa a ser el transporte o la orquestación.
 |---|---|---|
 | P0 | Especificación, config, esqueleto del repo | Hecho: docs y config validada |
 | P1 | Backend toy/HF, coordinador HTTP, 2 islas, checkpoints, reanudación | Hecho en localhost; HF 0.5B validado en CPU |
-| P2 | int8, top-k, error feedback, late join y TLS básico hechos; gRPC/mTLS real y churn pendientes | Ronda WAN con fallos inyectados |
+| P2 | int8, top-k, error feedback, late join, TLS básico, object store, WAN y transporte P2P hechos; gRPC/mTLS real y churn pendientes | Ronda WAN con fallos inyectados |
 | P3 | 4 islas WAN emulada (`tc netem`) + baseline centralizado | Convergencia y utilización medidas |
 | P4 | Piloto 32B QLoRA | Calidad y throughput aceptables |
 | P5 | Piloto 70B QLoRA | Calidad y throughput aceptables |
@@ -300,17 +300,24 @@ circuito de comparación, pero **no es F1 real**: falta el barrido con datos Zig
 Qwen2.5-0.5B/1.5B y dos nodos. La config `smoke.json` original
 (`outer_lr=0.7`) no estaba tuneada y daba un gap grande.
 
+F1 real (Qwen2.5-0.5B, 2 workers, 5 rondas, holdout Zig):
+
+- float, H=10: DiLoCo `2.417826` vs baseline `2.297088` → `loss_gap=+5.26%`.
+- int8 H=10/20/50/100: `2.418675`, `2.325399`, `2.274715`, `2.263300`
+  → `+5.29%`, `+1.23%`, `-0.97%`, `-1.47%`.
+- int8+top-k 10% H=10/20/50/100: `2.474486`, `2.445505`, `2.399221`,
+  `2.369196` → `+7.72%`, `+6.46%`, `+4.45%`, `+3.14%`.
+- int8 + error feedback H=10/20/50: `2.467926`, `2.435299`, `2.380166`
+  → `+7.44%`, `+6.02%`, `+3.62%`.
+
 Siguientes pasos:
 
-1. Repetir F1 con Qwen2.5-0.5B, holdout Zig y dos nodos; `H=10` dio
-   `loss_gap=+5.26%` (inicial 2.5002, DiLoCo 2.4178, baseline 2.2971). Probar
-   `H ∈ {20, 50, 100}`, int8 y 3 semillas; guardar curvas y `loss_gap`.
-2. Ejecutar F1 int8 con `configs/f1-qwen-0.5b-int8.json` y repetir el
-   barrido de `H`; el código y el test unitario ya están listos.
-3. Completar P2.2: gRPC/mTLS, top-k/error feedback, expulsión automática de
-   stragglers y tolerancia a churn.
-3. Probar 4 islas con WAN emulada (`tc netem`) y medir goodput, CU y bytes por
+1. Repetir F1 con `H ∈ {20, 50, 100}`, 3 semillas y top-k; guardar curvas y
+   `loss_gap`. Resultados actuales: int8 `+5.29%`, `+1.23%`, `-0.97%`,
+   `-1.47%`; int8+top-k `+7.72%`, `+6.46%`, `+4.45%`, `+3.14%`.
+2. Probar 4 islas con WAN emulada (`tc netem`) y medir goodput, CU y bytes por
    token.
+3. Completar gRPC/mTLS real y churn completo.
 4. Solo después, alquilar hardware para el piloto 32B y luego 70B.
 
 ## Referencias esenciales

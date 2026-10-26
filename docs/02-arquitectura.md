@@ -339,7 +339,7 @@ diferencias numéricas. Preferir una base pre-cuantizada y distribuida.
 
 | Fallo | Detección | Acción |
 |---|---|---|
-| Isla caída | Heartbeat 3× intervalo | Rejoin con el mismo `node_id`; expulsión automática pendiente |
+| Isla caída | Heartbeat 3× intervalo | Rejoin con el mismo `node_id`; expulsión básica implementada |
 | Isla lenta | Deadline de ronda | Marcar `LATE`; excluir de la ronda |
 | Upload corrupto | SHA256 + shape/dtype | Rechazar; pedir reintento |
 | Coordinador caído | health check | Reiniciar; las islas esperan y reintentan |
@@ -363,20 +363,20 @@ Implementación P2.2:
 
 Sigue siendo recomendable entrar al inicio de ronda para no competir con el
 deadline. Un `node_id` que ya estaba registrado puede reconectarse sin depender
-de `allow_late_join`. La expulsión automática por heartbeat y el `Leave`
-ordenado siguen pendientes; si no hay quórum, el run falla en vez de degradar.
+de `allow_late_join`. La expulsión básica por heartbeat y `Leave` están implementados; el churn
+completo sigue pendiente y, si no hay quórum, el run falla en vez de degradar.
 `prime` va más allá: la isla se une al outer step con pseudo-gradiente cero y
 salta los pasos interiores; es una optimización para runs largos, no necesaria
 en v1.
 
 ### 9.2 Salida ordenada
 
-Pendiente en P2.2:
+Implementado en P2.2:
 
-- Añadir `Leave` para que el coordinador elimine la isla antes del siguiente
-  `RoundStart`.
-- Si está a mitad de ronda, descartar su delta; no mezclar un delta parcial.
-- Guardar su estado local por si vuelve.
+- `Leave` elimina la isla antes del siguiente `RoundStart`.
+- Si está a mitad de ronda, su actualización queda rechazada como ronda
+  obsoleta.
+- Se guarda su estado local en los checkpoints para rejoin.
 
 Hoy una isla que termina deja de mandar heartbeat; el coordinador no la expulsa
 automáticamente y el deadline de ronda sigue siendo la única barrera.

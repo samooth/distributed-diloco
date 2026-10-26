@@ -84,6 +84,7 @@ Reglas:
 | bf16/fp16 | 2 | 1× | OpenDiLoCo: fp16 sin degradación | Baja | v1 |
 | int8 simétrico | 1 | 2× | INTELLECT-1: int8 sin impacto apreciable | Baja | P2.1 (hecho) |
 | top-k + error feedback | 1 | 2-10× | SparseLoCo: sparsificación con feedback | Media | P2.2 (hecho) |
+| túnel P2P | 1 | 1× | Hyperswarm: discovery y transporte sin exponer puertos | Media | P2.2 (hecho) |
 | 4 bits | 0.5 | 4× | Streaming DiLoCo | Media | v2 |
 | Top-k 1-3% + 2 bits | ~0.0025-0.0075 + índices | 50-100× | SparseLoCo | Alta | Full fine-tuning |
 | DCT + top-k (DeMo) | variable | 44-85× | DeMo | Media | Paso a paso, no DiLoCo |
@@ -110,10 +111,10 @@ Para cada tensor:
 - Agregar siempre en `fp32`; no promediar int8 directamente.
 - El adaptador global se publica en bf16/fp16 tras el outer step.
 
-**Implementación P2.1:** escala por tensor, `scale` en `fp32`, delta int8 en
-safetensors y decodificación a `fp32` antes de agregar. En Qwen2.5-0.5B el
-payload pasó de 2.16 MB a 0.54 MB (4×); el mensaje HTTP completo fue 0.567 MB
-(3.8×). Faltan top-k, error feedback y escala por bloque.
+**Implementación P2.1/P2.2:** int8 por tensor, top-k con error feedback, escala
+en `fp32`, decodificación a `fp32` antes de agregar y transporte P2P opcional.
+En Qwen2.5-0.5B el payload int8 pasó de 2.16 MB a 0.54 MB (4×); int8+top-k
+10% a 0.52 MB (4.0x). Faltan escala por bloque y gRPC/mTLS real.
 
 ### 4.2 SparseLoCo (solo si se necesita)
 

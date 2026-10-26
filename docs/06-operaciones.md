@@ -27,7 +27,7 @@ ya está implementado. Describe cómo desplegar, observar y recuperar un run.
 - El coordinador no necesita GPU en v1.
 - Una isla puede ser el coordinador en un piloto de 2 nodos, pero la red y la
   GPU compiten; no hacerlo en runs largos.
-- El object store puede ser MinIO en el coordinador o S3 externo. Para 70B,
+- El object store puede ser local, MinIO en el coordinador o S3 externo. Para 70B,
   prever 200-500 GB.
 - Tailscale/Netbird simplifica NAT y mTLS; WireGuard puro requiere más
   configuración.

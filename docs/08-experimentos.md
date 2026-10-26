@@ -86,13 +86,13 @@ P0/P1 están implementados:
 
 - Config validada, backend toy y backend HF/PEFT, protocolo binario con
   safetensors, checkpoints atómicos, reanudación y smoke de 2 workers.
-- F0 parcial: se validó una ronda end-to-end con Qwen2.5-0.5B en CPU, se probó
-  la reanudación desde checkpoint y el delta agregado. La equivalencia de un
-  paso entre backend local y baseline centralizado está cubierta por tests.
-  int8, top-k y error feedback están implementados; falta un barrido de varias
-  rondas con dos nodos. P2.2 añade late join, salida ordenada, expulsión básica
-  y TLS opcional; faltan gRPC/mTLS real y pruebas de churn con fallos inyectados.
-  La carga HF usa un lock para evitar meta-tensors con dos workers en CPU.
+- F0 parcial: se validó una ronda end-to-end con Qwen2.5-0.5B en CPU/GPU, se
+  probó la reanudación desde checkpoint y el delta agregado. La equivalencia de
+  un paso entre backend local y baseline centralizado está cubierta por tests.
+  int8, top-k, error feedback, expulsión básica, TLS opcional, object store,
+  emulación WAN y transporte P2P están implementados. Faltan gRPC/mTLS real y
+  pruebas de churn con fallos inyectados. La carga HF usa un lock para evitar
+  meta-tensors con dos workers.
 - El baseline centralizado está implementado en
   `scripts/train_centralized.py`. En F1 toy (`configs/f1-toy.json`, `H=20`,
   `outer_lr=0.2`, 20 rondas y 800 pasos-equivalentes): baseline
@@ -110,10 +110,14 @@ P0/P1 están implementados:
   `outer_lr=0.2`, 5 rondas: inicial `2.491262`, DiLoCo `2.418675`, baseline
   `2.297088`, `loss_gap=+5.29%`. Upload por ronda `567341-567342 B` frente a
   `2162688 B` de delta (3.8x).
-- F1 int8+top-k al 10% ejecutada en GPU con Qwen2.5-0.5B-Instruct, 2 workers,
-  `H=10`, `outer_lr=0.2`, 5 rondas y error feedback: inicial `2.491262`,
-  DiLoCo `2.474486`, baseline `2.297088`, `loss_gap=+7.72%`. Upload por ronda
-  `544057-544059 B` (4.0x). Queda repetir con `H ∈ {20, 50, 100}` y 3 semillas.
+- Barrido int8 H=10/20/50/100: DiLoCo `2.418675`, `2.325399`, `2.274715`,
+  `2.263300`; `loss_gap=+5.29%`, `+1.23%`, `-0.97%`, `-1.47%`.
+- Barrido int8+top-k 10% H=10/20/50/100: DiLoCo `2.474486`, `2.445505`,
+  `2.399221`, `2.369196`; `loss_gap=+7.72%`, `+6.46%`, `+4.45%`, `+3.14%`.
+- Barrido int8 + error feedback H=10/20/50: DiLoCo `2.467926`, `2.435299`,
+  `2.380166`; `loss_gap=+7.44%`, `+6.02%`, `+3.62%`.
+- F2-F6 no ejecutadas. La validación HF se hizo con Qwen2.5-0.5B y no sustituye
+  a un piloto 32B/70B.
 - F2-F6 no ejecutadas. La GPU local estaba ocupada durante el desarrollo, así
   que la validación HF fue en CPU y no sustituye a un piloto 32B/70B.
 

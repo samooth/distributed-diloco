@@ -12,7 +12,7 @@ resueltas.
 |---|---|
 | Pesos base y adaptadores | Propiedad intelectual; coste de entrenamiento |
 | Datos de entrenamiento | Privacidad, licencias, secretos |
-| Credenciales y claves | Acceso al coordinador, object store y nodos |
+| Credenciales y claves | Acceso al coordinador, object store, TLS y nodos |
 | Integridad del modelo | Un adaptador envenenado puede ser peligroso |
 | Disponibilidad | Un nodo puede bloquear o inundar el run |
 | Reputación | Un run público con datos filtrados es un incidente |
