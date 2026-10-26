@@ -151,6 +151,16 @@ class CheckpointStore:
             meta=meta,
         )
 
+    def prune(self, keep: int) -> None:
+        if keep < 0:
+            raise ValueError("keep must be >= 0")
+        dirs = self._dirs()
+        if keep == 0 or len(dirs) <= keep:
+            return
+        for path in dirs[:-keep]:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+
     def append_metrics(self, record: Mapping[str, Any]) -> None:
         line = json.dumps(dict(record), sort_keys=True, default=str)
         with self.metrics_file.open("a", encoding="utf-8") as handle:

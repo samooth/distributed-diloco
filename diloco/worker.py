@@ -14,7 +14,7 @@ from typing import Any, Dict, Mapping, Optional
 import torch
 
 from .backend import AdapterBackend
-from .compression import encode_int8
+from .compression import compress_state, decompress_state
 from .config import ExperimentConfig
 from .protocol import pack_message, unpack_message
 from .tensor_utils import clone_state, global_norm, hash_state, scale_state, subtract_state
@@ -49,10 +49,33 @@ class Worker:
         self._heartbeat_interval = 30.0 if idle <= 0 else max(1.0, min(30.0, idle / 3.0))
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._residual: Optional[Dict[str, torch.Tensor]] = None
 
     def _headers(self) -> Dict[str, str]:
         token = self.config.coordinator.token
         return {"X-DiLoCo-Token": token} if token else {}
+
+    def _ssl_context(self) -> Optional[Any]:
+        if not self.coordinator_url.startswith("https://"):
+            return None
+        import ssl
+
+        if self.config.coordinator.tls_cert and self.config.coordinator.tls_key:
+            context = ssl.create_default_context()
+            context.load_cert_chain(
+                self.config.coordinator.tls_cert,
+                self.config.coordinator.tls_key,
+            )
+        else:
+            context = ssl.create_default_context()
+        if self.config.coordinator.tls_client_ca:
+            context.load_verify_locations(self.config.coordinator.tls_client_ca)
+        if not self.config.coordinator.tls_verify:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        if self.config.coordinator.tls_require_client_cert is False:
+            pass
+        return context
 
     def _request(
         self,
@@ -67,10 +90,12 @@ class Worker:
         if body is not None:
             headers["Content-Type"] = content_type
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        context = self._ssl_context()
         try:
             with urllib.request.urlopen(
                 request,
                 timeout=self._timeout if timeout is None else timeout,
+                context=context,
             ) as response:
                 return int(response.status), response.read(), response.headers.get_content_type()
         except urllib.error.HTTPError as exc:
@@ -207,12 +232,25 @@ class Worker:
             if weight <= 0:
                 weight = float(max(1, self.config.train.batch_size))
             compression = self.config.train.delta_compression
-            if compression == "int8":
-                upload_state = encode_int8(delta)
-            elif compression == "none":
-                upload_state = delta
+            top_k_ratio = float(self.config.train.top_k_ratio)
+            error_feedback = bool(self.config.train.error_feedback)
+            if error_feedback:
+                if self._residual is None:
+                    self._residual = {
+                        key: torch.zeros_like(value, device="cpu", dtype=torch.float32)
+                        for key, value in delta.items()
+                    }
+                upload_input = {
+                    key: self._residual[key] + delta[key] for key in delta
+                }
             else:
-                raise RuntimeError(f"unsupported delta compression: {compression}")
+                upload_input = delta
+            upload_state = compress_state(upload_input, compression, top_k_ratio)
+            reconstructed = decompress_state(upload_state, compression, top_k_ratio)
+            if error_feedback and self._residual is not None:
+                self._residual = {
+                    key: self._residual[key] - reconstructed[key] for key in reconstructed
+                }
             payload_meta = {
                 "node_id": self.node_id,
                 "round": round_id,
@@ -253,6 +291,7 @@ class Worker:
                     new_meta, new_state = self.get_state()
                     if int(new_meta["round"]) <= round_id:
                         raise
+                    self._residual = None
                     meta, state = new_meta, clone_state(new_state)
                     continue
                 self._append_log(
@@ -317,6 +356,14 @@ class Worker:
         self._append_log({"node_id": self.node_id, "summary": summary})
         return summary
 
+    def leave(self) -> None:
+        try:
+            body = json.dumps({"node_id": self.node_id}).encode("utf-8")
+            self._request("POST", "/v1/leave", body)
+        except CoordinatorError:
+            pass
+
     def close(self) -> None:
         self._stop_heartbeat()
+        self.leave()
         self.backend.close()

@@ -137,8 +137,9 @@ recomendable para cargas grandes.
 - P1 usa la biblioteca estándar: HTTP/1.0, JSON y safetensors. No requiere
   gRPC ni FastAPI.
 - P2.1 (int8) usa safetensors con tensores `int8` y una escala `fp32` por
-  tensor. P2.2 añade late join opcional y reintento de ronda obsoleta; gRPC/HTTP2,
-  TLS/mTLS, top-k/error feedback y object store (MinIO/S3) siguen pendientes.
+  tensor. P2.2 añade top-k, error feedback, late join, salida ordenada,
+  expulsión básica y TLS opcional; gRPC/HTTP2 real, churn completo y object
+  store (MinIO/S3) siguen pendientes.
 - Contenedores con versiones fijas de CUDA, PyTorch y bitsandbytes. La versión
   de bitsandbytes debe ser idéntica en todas las islas.
 
@@ -165,7 +166,7 @@ el cuello de botella pasa a ser el transporte o la orquestación.
 |---|---|---|
 | P0 | Especificación, config, esqueleto del repo | Hecho: docs y config validada |
 | P1 | Backend toy/HF, coordinador HTTP, 2 islas, checkpoints, reanudación | Hecho en localhost; HF 0.5B validado en CPU |
-| P2 | int8 y late join/reintento hechos; gRPC/mTLS, top-k y churn pendientes | Ronda WAN con fallos inyectados |
+| P2 | int8, top-k, error feedback, late join y TLS básico hechos; gRPC/mTLS real y churn pendientes | Ronda WAN con fallos inyectados |
 | P3 | 4 islas WAN emulada (`tc netem`) + baseline centralizado | Convergencia y utilización medidas |
 | P4 | Piloto 32B QLoRA | Calidad y throughput aceptables |
 | P5 | Piloto 70B QLoRA | Calidad y throughput aceptables |

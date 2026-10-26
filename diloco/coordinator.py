@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 import torch
 
 from .checkpoint import Checkpoint, CheckpointStore
-from .compression import decode_int8
+from .compression import decode_int8, decompress_state
 from .config import ExperimentConfig
 from .outer import OuterOptimizer
 from .protocol import ProtocolError, hash_blob, pack_state, unpack_state
@@ -215,8 +216,11 @@ class Coordinator:
                                 f"compression mismatch: got {compression!r}, expected {expected!r}",
                             )
                         try:
-                            if compression == "int8":
-                                tensors = decode_int8(tensors)
+                            tensors = decompress_state(
+                                tensors,
+                                compression,
+                                float(coordinator.config.train.top_k_ratio),
+                            )
                             delta = clone_state(tensors)
                         except ValueError as exc:
                             raise ApiError(400, f"invalid compressed delta: {exc}") from exc
@@ -230,6 +234,11 @@ class Coordinator:
                             update_hash=hash_blob(body),
                         )
                         self._send_bytes(200, result, "application/octet-stream")
+                        return
+                    if route == "/v1/leave":
+                        payload = self._read_json()
+                        result = coordinator.leave(node_id=str(payload.get("node_id", "")))
+                        self._send_json(200, result)
                         return
                     raise ApiError(404, f"unknown route: {route}")
                 except ApiError as exc:
@@ -247,6 +256,20 @@ class Coordinator:
             Handler,
         )
         self.port = int(self.server.server_address[1])
+        if self.config.coordinator.tls_cert or self.config.coordinator.tls_key:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(
+                self.config.coordinator.tls_cert,
+                self.config.coordinator.tls_key,
+            )
+            if self.config.coordinator.tls_client_ca:
+                context.load_verify_locations(self.config.coordinator.tls_client_ca)
+                context.verify_mode = (
+                    ssl.CERT_REQUIRED
+                    if self.config.coordinator.tls_require_client_cert
+                    else ssl.CERT_OPTIONAL
+                )
+            self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         LOG.info(
@@ -308,6 +331,7 @@ class Coordinator:
         if not hmac.compare_digest(str(base_hash), self.base_hash):
             raise ApiError(409, "base model fingerprint mismatch")
         with self.cond:
+            self._evict_stale_locked()
             if self.failure:
                 raise ApiError(503, f"run failed: {self.failure}")
             if self.finished:
@@ -334,6 +358,7 @@ class Coordinator:
 
     def heartbeat(self, node_id: str) -> Dict[str, Any]:
         with self.cond:
+            self._evict_stale_locked()
             self._require_node_locked(node_id)
             if self.failure:
                 raise ApiError(503, f"run failed: {self.failure}")
@@ -349,6 +374,7 @@ class Coordinator:
 
     def get_state(self, node_id: str) -> bytes:
         with self.cond:
+            self._evict_stale_locked()
             self._require_node_locked(node_id)
             if self.failure:
                 raise ApiError(503, f"run failed: {self.failure}")
@@ -368,6 +394,7 @@ class Coordinator:
         if weight <= 0 or not torch.isfinite(torch.tensor(weight)).item():
             raise ApiError(400, "weight must be positive and finite")
         with self.cond:
+            self._evict_stale_locked()
             self._require_node_locked(node_id)
             if self.failure:
                 raise ApiError(503, f"run failed: {self.failure}")
@@ -489,6 +516,7 @@ class Coordinator:
             LOG.exception("checkpoint failed")
             self.cond.notify_all()
             raise ApiError(500, self.failure) from exc
+        self._prune_checkpoints_locked()
         self.finished = bool(metrics["done"])
         self.updates.clear()
         self.round_started_at = None
@@ -501,6 +529,38 @@ class Coordinator:
             metrics["delta_norm"],
             sync_seconds,
         )
+
+    def leave(self, node_id: str) -> Dict[str, Any]:
+        with self.cond:
+            removed = node_id in self.registered
+            if removed:
+                del self.registered[node_id]
+                self.updates.pop(node_id, None)
+                self.last_activity = time.time()
+                self.cond.notify_all()
+            return {"ok": True, "removed": removed}
+
+    def _evict_stale_locked(self) -> None:
+        timeout = float(self.config.coordinator.idle_timeout_s)
+        if timeout <= 0 or self.finished:
+            return
+        now = time.time()
+        stale = [
+            node_id
+            for node_id, info in list(self.registered.items())
+            if now - float(info.get("last_seen", now)) > timeout
+        ]
+        for node_id in stale:
+            del self.registered[node_id]
+            self.updates.pop(node_id, None)
+            LOG.warning("evicted stale worker %s", node_id)
+        if stale:
+            self.cond.notify_all()
+
+    def _prune_checkpoints_locked(self) -> None:
+        keep = int(self.config.coordinator.checkpoint_retention)
+        if keep > 0:
+            self.store.prune(keep)
 
     # ----------------------------------------------------------------- status
     def health(self) -> Dict[str, Any]:

@@ -89,10 +89,9 @@ P0/P1 están implementados:
 - F0 parcial: se validó una ronda end-to-end con Qwen2.5-0.5B en CPU, se probó
   la reanudación desde checkpoint y el delta agregado. La equivalencia de un
   paso entre backend local y baseline centralizado está cubierta por tests.
-  int8 está implementado y probado en toy (sin degradación apreciable) y en
-  Qwen2.5-0.5B; falta un barrido int8 de varias rondas con dos nodos.
-  P2.2 añade late join y reintento de ronda obsoleta; faltan expulsión
-  automática, gRPC/mTLS y pruebas de churn con fallos inyectados.
+  int8, top-k y error feedback están implementados; falta un barrido de varias
+  rondas con dos nodos. P2.2 añade late join, salida ordenada, expulsión básica
+  y TLS opcional; faltan gRPC/mTLS real y pruebas de churn con fallos inyectados.
   La carga HF usa un lock para evitar meta-tensors con dos workers en CPU.
 - El baseline centralizado está implementado en
   `scripts/train_centralized.py`. En F1 toy (`configs/f1-toy.json`, `H=20`,

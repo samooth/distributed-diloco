@@ -127,6 +127,8 @@ class LocalhostSmokeTests(unittest.TestCase):
                     if submit_count == 1:
                         raise CoordinatorError(409, "stale round 0; current round is 1")
                     return 200, blob(2, True), "application/octet-stream"
+                if path.startswith("/v1/leave"):
+                    return 200, b'{"ok":true,"removed":true}', "application/json"
                 raise AssertionError(f"unexpected request: {method} {path}")
 
             worker._request = fake_request  # type: ignore[method-assign]

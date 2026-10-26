@@ -57,6 +57,8 @@ class TrainConfig:
     seed: int = 42
     reset_inner_optimizer: bool = True
     delta_compression: str = "none"
+    top_k_ratio: float = 0.1
+    error_feedback: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,12 @@ class CoordinatorConfig:
     max_body_bytes: int = 1_073_741_824
     idle_timeout_s: float = 600.0
     allow_late_join: bool = False
+    checkpoint_retention: int = 5
+    tls_cert: str = ""
+    tls_key: str = ""
+    tls_client_ca: str = ""
+    tls_require_client_cert: bool = False
+    tls_verify: bool = True
 
 
 @dataclass(frozen=True)
@@ -151,6 +159,8 @@ def _train_from_dict(raw: Mapping[str, Any]) -> TrainConfig:
         seed=int(raw.get("seed", 42)),
         reset_inner_optimizer=bool(raw.get("reset_inner_optimizer", True)),
         delta_compression=str(raw.get("delta_compression", "none")).lower(),
+        top_k_ratio=float(raw.get("top_k_ratio", 0.1)),
+        error_feedback=bool(raw.get("error_feedback", False)),
     )
 
 
@@ -182,6 +192,12 @@ def _coordinator_from_dict(raw: Mapping[str, Any]) -> CoordinatorConfig:
         max_body_bytes=int(raw.get("max_body_bytes", 1_073_741_824)),
         idle_timeout_s=float(raw.get("idle_timeout_s", 600.0)),
         allow_late_join=bool(raw.get("allow_late_join", False)),
+        checkpoint_retention=int(raw.get("checkpoint_retention", 5)),
+        tls_cert=str(raw.get("tls_cert", "")),
+        tls_key=str(raw.get("tls_key", "")),
+        tls_client_ca=str(raw.get("tls_client_ca", "")),
+        tls_require_client_cert=bool(raw.get("tls_require_client_cert", False)),
+        tls_verify=bool(raw.get("tls_verify", True)),
     )
 
 
@@ -254,8 +270,15 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError("train.batch_size and train.grad_accum must be >= 1")
     if t.outer_lr <= 0:
         raise ValueError("train.outer_lr must be > 0")
-    if t.delta_compression not in ("none", "int8"):
-        raise ValueError("train.delta_compression must be 'none' or 'int8'")
+    if t.delta_compression not in ("none", "int8", "topk", "int8_topk"):
+        raise ValueError("train.delta_compression must be none/int8/topk/int8_topk")
+    if not 0.0 < t.top_k_ratio <= 1.0:
+        raise ValueError("train.top_k_ratio must be in (0, 1]")
+    if c.checkpoint_retention < 0:
+        raise ValueError("coordinator.checkpoint_retention must be >= 0")
+    if c.tls_cert or c.tls_key:
+        if not c.tls_cert or not c.tls_key:
+            raise ValueError("tls_cert and tls_key must be provided together")
     if not 0.0 <= t.outer_momentum < 1.0:
         raise ValueError("train.outer_momentum must be in [0, 1)")
     if d.num_shards < 1:

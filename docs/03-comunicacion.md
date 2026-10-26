@@ -83,6 +83,7 @@ Reglas:
 |---|---:|---:|---|---|---|
 | bf16/fp16 | 2 | 1× | OpenDiLoCo: fp16 sin degradación | Baja | v1 |
 | int8 simétrico | 1 | 2× | INTELLECT-1: int8 sin impacto apreciable | Baja | P2.1 (hecho) |
+| top-k + error feedback | 1 | 2-10× | SparseLoCo: sparsificación con feedback | Media | P2.2 (hecho) |
 | 4 bits | 0.5 | 4× | Streaming DiLoCo | Media | v2 |
 | Top-k 1-3% + 2 bits | ~0.0025-0.0075 + índices | 50-100× | SparseLoCo | Alta | Full fine-tuning |
 | DCT + top-k (DeMo) | variable | 44-85× | DeMo | Media | Paso a paso, no DiLoCo |
