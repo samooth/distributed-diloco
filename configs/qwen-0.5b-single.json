@@ -1,0 +1,49 @@
+{
+  "run_id": "qwen-0.5b-single",
+  "model": {
+    "kind": "hf",
+    "name_or_path": "/ai/models/Qwen2.5-0.5B-Instruct",
+    "rank": 8,
+    "alpha": 16.0,
+    "dtype": "auto",
+    "quant": "none",
+    "target_modules": ["q_proj", "v_proj"],
+    "max_length": 128,
+    "gradient_checkpointing": true
+  },
+  "train": {
+    "H": 1,
+    "inner_lr": 0.0001,
+    "inner_weight_decay": 0.0,
+    "outer_lr": 0.7,
+    "outer_momentum": 0.9,
+    "batch_size": 1,
+    "grad_accum": 1,
+    "max_grad_norm": 1.0,
+    "max_delta_norm": 0.0,
+    "seed": 42,
+    "reset_inner_optimizer": true
+  },
+  "data": {
+    "path": "../data/zig_dense_v5_module_clean.jsonl",
+    "eval_path": "../data/zig_holdout.jsonl",
+    "num_shards": 1,
+    "max_samples": 8,
+    "eval_samples": 2,
+    "eval_every": 1,
+    "shuffle": true
+  },
+  "coordinator": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "min_workers": 1,
+    "max_workers": 1,
+    "quorum": 1,
+    "round_timeout_s": 600.0,
+    "max_rounds": 1,
+    "checkpoint_dir": "runs/qwen-0.5b-single",
+    "checkpoint_every": 1,
+    "token": "change-me",
+    "idle_timeout_s": 900.0
+  }
+}

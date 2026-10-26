@@ -1,0 +1,46 @@
+{
+  "run_id": "int8-toy",
+  "model": {
+    "kind": "toy",
+    "in_features": 16,
+    "out_features": 8,
+    "rank": 4,
+    "alpha": 4.0
+  },
+  "train": {
+    "H": 20,
+    "inner_lr": 0.05,
+    "inner_weight_decay": 0.0,
+    "outer_lr": 0.2,
+    "outer_momentum": 0.9,
+    "batch_size": 16,
+    "grad_accum": 1,
+    "max_grad_norm": 1.0,
+    "max_delta_norm": 0.0,
+    "seed": 42,
+    "reset_inner_optimizer": true,
+    "delta_compression": "int8"
+  },
+  "data": {
+    "path": "",
+    "eval_path": "",
+    "num_shards": 2,
+    "max_samples": 0,
+    "eval_samples": 64,
+    "eval_every": 1,
+    "shuffle": true
+  },
+  "coordinator": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "min_workers": 2,
+    "max_workers": 4,
+    "quorum": 2,
+    "round_timeout_s": 30.0,
+    "max_rounds": 20,
+    "checkpoint_dir": "runs/int8-toy",
+    "checkpoint_every": 5,
+    "token": "f1-token",
+    "idle_timeout_s": 120.0
+  }
+}

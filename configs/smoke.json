@@ -1,0 +1,43 @@
+{
+  "run_id": "smoke-local",
+  "model": {
+    "kind": "toy",
+    "in_features": 16,
+    "out_features": 8,
+    "rank": 4,
+    "alpha": 4.0
+  },
+  "train": {
+    "H": 20,
+    "inner_lr": 0.05,
+    "inner_weight_decay": 0.0,
+    "outer_lr": 0.7,
+    "outer_momentum": 0.9,
+    "batch_size": 16,
+    "grad_accum": 1,
+    "max_grad_norm": 1.0,
+    "max_delta_norm": 0.0,
+    "seed": 42,
+    "reset_inner_optimizer": true
+  },
+  "data": {
+    "num_shards": 2,
+    "max_samples": 0,
+    "eval_samples": 64,
+    "eval_every": 1,
+    "shuffle": true
+  },
+  "coordinator": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "min_workers": 2,
+    "max_workers": 4,
+    "quorum": 2,
+    "round_timeout_s": 60.0,
+    "max_rounds": 4,
+    "checkpoint_dir": "runs/smoke-local",
+    "checkpoint_every": 1,
+    "token": "smoke-token",
+    "idle_timeout_s": 120.0
+  }
+}
