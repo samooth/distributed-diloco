@@ -181,7 +181,28 @@ class Worker:
             handle.write(json.dumps(dict(record), sort_keys=True, default=str) + "\n")
 
     def run(self) -> Dict[str, Any]:
-        info = self.register()
+        try:
+            info = self.register()
+        except CoordinatorError as exc:
+            self._append_log(
+                {
+                    "node_id": self.node_id,
+                    "error": str(exc),
+                    "status": exc.status,
+                }
+            )
+            LOG.warning("%s: %s", self.node_id, exc)
+            return {
+                "node_id": self.node_id,
+                "rounds_done": 0,
+                "start_round": 0,
+                "final_round": 0,
+                "initial_eval_loss": None,
+                "final_eval_loss": None,
+                "registered_at_start": [],
+                "last_metrics": {},
+                "failure": str(exc),
+            }
         self._start_heartbeat()
         try:
             return self._run_registered(info)
@@ -203,6 +224,7 @@ class Worker:
         initial_eval = self.backend.evaluate()
         rounds_done = 0
         stale_retries = 0
+        run_failed = False
         last_metrics: Dict[str, Any] = {}
         while int(meta["round"]) < max_rounds:
             round_id = int(meta["round"])
@@ -294,6 +316,31 @@ class Worker:
                     self._residual = None
                     meta, state = new_meta, clone_state(new_state)
                     continue
+                if exc.status == 504 and "timed out" in str(exc):
+                    run_failed = True
+                    self._append_log(
+                        {
+                            "node_id": self.node_id,
+                            "round": round_id,
+                            "error": str(exc),
+                            "status": exc.status,
+                            "quorum_timeout": True,
+                        }
+                    )
+                    LOG.warning("%s: %s", self.node_id, exc)
+                    break
+                if exc.status == 503 and "run failed" in str(exc):
+                    run_failed = True
+                    self._append_log(
+                        {
+                            "node_id": self.node_id,
+                            "round": round_id,
+                            "error": str(exc),
+                            "status": exc.status,
+                        }
+                    )
+                    LOG.warning("%s: %s", self.node_id, exc)
+                    break
                 self._append_log(
                     {
                         "node_id": self.node_id,
@@ -341,8 +388,11 @@ class Worker:
             if bool(meta.get("done", False)):
                 break
 
-        self.backend.load_state(clone_state(state))
-        final_eval = self.backend.evaluate().get("eval_loss")
+        if not run_failed:
+            self.backend.load_state(clone_state(state))
+            final_eval = self.backend.evaluate().get("eval_loss")
+        else:
+            final_eval = None
         summary = {
             "node_id": self.node_id,
             "rounds_done": rounds_done,
@@ -352,6 +402,7 @@ class Worker:
             "final_eval_loss": final_eval,
             "registered_at_start": info.get("registered", []),
             "last_metrics": last_metrics,
+            "failure": "round timed out waiting for quorum" if run_failed else None,
         }
         self._append_log({"node_id": self.node_id, "summary": summary})
         return summary
