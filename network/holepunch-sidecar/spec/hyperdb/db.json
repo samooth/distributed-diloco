@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "offset": 0,
+  "schema": [
+    {
+      "name": "metadata",
+      "namespace": "diloco",
+      "id": 0,
+      "type": 1,
+      "version": 1,
+      "versionField": null,
+      "indexes": [
+        "@diloco/metadata-by-key"
+      ],
+      "schema": "@diloco/metadata",
+      "derived": false,
+      "key": [
+        "key"
+      ],
+      "trigger": null
+    },
+    {
+      "name": "metadata-by-key",
+      "namespace": "diloco",
+      "id": 1,
+      "type": 2,
+      "version": 1,
+      "collection": "@diloco/metadata",
+      "unique": true,
+      "deprecated": false,
+      "key": {
+        "type": "string",
+        "map": "mapKey"
+      }
+    }
+  ]
+}

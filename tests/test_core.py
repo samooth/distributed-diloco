@@ -17,7 +17,15 @@ from diloco.checkpoint import (
     load_initial_state,
     save_initial_state,
 )
-from diloco.compression import decode_int8, encode_int8, int8_error
+from diloco.compression import (
+    compress_state,
+    decode_int8,
+    decode_topk,
+    decompress_state,
+    encode_int8,
+    encode_topk,
+    int8_error,
+)
 from diloco.config import (
     ExperimentConfig,
     ModelConfig,
@@ -179,7 +187,51 @@ class CompressionTests(unittest.TestCase):
             decode_int8({"a": torch.tensor([1], dtype=torch.float32), "__scale__.a": torch.tensor([1.0])})
 
 
-class ToyBackendTests(unittest.TestCase):
+class CompressionModeTests(unittest.TestCase):
+    def test_topk_roundtrip(self):
+        state = {"a": torch.tensor([-3.0, 0.0, 0.5, 0.0, 3.0])}
+        payload = encode_topk(state, 0.4)
+        restored = decode_topk(payload)
+        self.assertEqual(set(restored), set(state))
+        self.assertLess(int8_error(state, restored), 3.1)
+        self.assertTrue(torch.equal(restored["a"][1], torch.tensor(0.0)))
+
+    def test_int8_topk_roundtrip(self):
+        state = {"a": torch.tensor([-3.0, 0.0, 0.5, 0.0, 3.0])}
+        payload = encode_topk(state, 0.4, int8=True)
+        restored = decode_topk(payload, int8=True)
+        self.assertEqual(set(restored), set(state))
+        self.assertLess(int8_error(state, restored), 3.1)
+
+    def test_compress_state_modes(self):
+        state = {"a": torch.tensor([1.0, 2.0, 3.0])}
+        for mode in ("none", "int8", "topk", "int8_topk"):
+            restored = decompress_state(compress_state(state, mode, 0.5), mode, 0.5)
+            self.assertEqual(set(restored), set(state))
+            self.assertEqual(tuple(restored["a"].shape), (3,))
+
+    def test_topk_rejects_bad_payload(self):
+        with self.assertRaises(ValueError):
+            decode_topk({"a.__indices__": torch.tensor([0]), "a.__values__": torch.tensor([1.0])})
+        payload = encode_topk({"a": torch.tensor([1.0, 2.0])}, 1.0)
+        payload["a.__indices__"] = torch.tensor([99])
+        with self.assertRaises(ValueError):
+            decode_topk(payload)
+
+
+class ConfigValidationTests(unittest.TestCase):
+    def test_topk_ratio_and_tls_are_validated(self):
+        from diloco.config import validate_config
+
+        with self.assertRaises(ValueError):
+            validate_config(config_from_dict({"train": {"top_k_ratio": 0.0}}))
+        with self.assertRaises(ValueError):
+            validate_config(config_from_dict({"coordinator": {"tls_cert": "cert.pem"}}))
+        with self.assertRaises(ValueError):
+            validate_config(config_from_dict({"coordinator": {"checkpoint_retention": -1}}))
+
+
+
     def test_adapter_learns_toy_task(self):
         config = ExperimentConfig(
             model=ModelConfig(kind="toy", in_features=16, out_features=8, rank=4, alpha=4.0),

@@ -89,6 +89,8 @@ class CoordinatorConfig:
     idle_timeout_s: float = 600.0
     allow_late_join: bool = False
     checkpoint_retention: int = 5
+    checkpoint_object_store: str = ""
+    checkpoint_object_prefix: str = "checkpoints"
     tls_cert: str = ""
     tls_key: str = ""
     tls_client_ca: str = ""
@@ -193,6 +195,8 @@ def _coordinator_from_dict(raw: Mapping[str, Any]) -> CoordinatorConfig:
         idle_timeout_s=float(raw.get("idle_timeout_s", 600.0)),
         allow_late_join=bool(raw.get("allow_late_join", False)),
         checkpoint_retention=int(raw.get("checkpoint_retention", 5)),
+        checkpoint_object_store=str(raw.get("checkpoint_object_store", "")),
+        checkpoint_object_prefix=str(raw.get("checkpoint_object_prefix", "checkpoints")),
         tls_cert=str(raw.get("tls_cert", "")),
         tls_key=str(raw.get("tls_key", "")),
         tls_client_ca=str(raw.get("tls_client_ca", "")),

@@ -151,6 +151,19 @@ recomendable para cargas grandes.
   efectivo. La subida doméstica suele ser asimétrica.
 - NTP activo. Relojes sincronizados para logs y deadlines.
 
+## Red P2P opcional: Holepunch
+
+El directorio `network/holepunch-sidecar/` contiene un sidecar Node.js opcional:
+
+- Hyperswarm: discovery y NAT traversal.
+- Hypercore: log append-only de rondas.
+- Hyperdrive: replicación de checkpoints/adaptadores.
+- HyperDB: índice de metadata de artefactos.
+
+No reemplaza al coordinador Python ni a la agregación DiLoCo; solo cubre la
+parte de red y distribución de artefactos. Ver
+`network/holepunch-sidecar/README.md`.
+
 ## Stack: por qué Python y no Zig
 
 El repositorio se llama `moe-zig-lab` porque el dominio de datos es Zig, no

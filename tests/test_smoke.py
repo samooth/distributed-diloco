@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import sys
+import time
 import tempfile
 import threading
 import unittest
+
+import torch
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -142,6 +145,113 @@ class LocalhostSmokeTests(unittest.TestCase):
             self.assertEqual(summary["final_round"], 2)
             log = (Path(tmp) / "worker.jsonl").read_text()
             self.assertIn("stale_round_retry", log)
+
+
+    def test_evicts_idle_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-evict",
+                model=ModelConfig(kind="toy", in_features=4, out_features=2, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=4),
+                coordinator=CoordinatorConfig(
+                    min_workers=1,
+                    max_workers=2,
+                    quorum=1,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    token="unit-token",
+                    idle_timeout_s=0.01,
+                ),
+            )
+            state, base_hash, meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, meta)
+            coordinator.register("node-0", config.fingerprint(), coordinator.base_hash)
+            time.sleep(0.03)
+            with self.assertRaises(ApiError) as caught:
+                coordinator.heartbeat("node-0")
+            self.assertEqual(caught.exception.status, 403)
+            self.assertNotIn("node-0", coordinator.registered)
+
+    def test_leave_removes_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-leave",
+                model=ModelConfig(kind="toy", in_features=4, out_features=2, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=4),
+                coordinator=CoordinatorConfig(
+                    min_workers=1,
+                    max_workers=2,
+                    quorum=1,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    token="unit-token",
+                    idle_timeout_s=30.0,
+                ),
+            )
+            state, base_hash, meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, meta)
+            coordinator.register("node-0", config.fingerprint(), coordinator.base_hash)
+            result = coordinator.leave("node-0")
+            self.assertTrue(result["removed"])
+            with self.assertRaises(ApiError):
+                coordinator.heartbeat("node-0")
+
+    def test_checkpoint_retention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CheckpointStore(tmp)
+            state = {"a": torch.tensor([1.0])}
+            for round_index in range(1, 8):
+                store.save(round_index, round_index, state, state, "cfg", "base")
+            store.prune(2)
+            rounds = [p.name for p in Path(tmp).glob("checkpoint-*")]
+            self.assertEqual(sorted(rounds), ["checkpoint-000006", "checkpoint-000007"])
+            self.assertEqual(store.latest_round(), 7)
+
+
+
+    def test_checkpoint_syncs_to_object_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from diloco.object_store import LocalObjectStore
+
+            store_root = Path(tmp) / "store"
+            store = CheckpointStore(tmp, object_store=LocalObjectStore(store_root))
+            state = {"a": torch.tensor([1.0, 2.0])}
+            store.save(1, 10, state, state, "cfg", "base")
+            store.save(2, 20, state, state, "cfg", "base")
+            self.assertEqual(sorted(store.object_store.list("checkpoints")), ["checkpoints/checkpoint-000001/adapter.safetensors", "checkpoints/checkpoint-000001/meta.json", "checkpoints/checkpoint-000001/outer.safetensors", "checkpoints/checkpoint-000002/adapter.safetensors", "checkpoints/checkpoint-000002/meta.json", "checkpoints/checkpoint-000002/outer.safetensors"])
+            store.prune(1)
+            self.assertEqual(store.object_store.list("checkpoints/checkpoint-000001"), [])
+            self.assertEqual(store.latest_round(), 2)
+
+    def test_evicted_worker_can_rejoin_with_late_join(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-rejoin",
+                model=ModelConfig(kind="toy", in_features=4, out_features=2, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=4),
+                coordinator=CoordinatorConfig(
+                    min_workers=1,
+                    max_workers=2,
+                    quorum=1,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    token="unit-token",
+                    idle_timeout_s=0.01,
+                    allow_late_join=True,
+                ),
+            )
+            state, base_hash, meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, meta)
+            coordinator.register("node-0", config.fingerprint(), coordinator.base_hash)
+            time.sleep(0.03)
+            with self.assertRaises(ApiError):
+                coordinator.heartbeat("node-0")
+            info = coordinator.register("node-0", config.fingerprint(), coordinator.base_hash)
+            self.assertEqual(info["node_id"], "node-0")
+            self.assertIn("node-0", info["registered"])
 
     def test_single_worker_int8_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:

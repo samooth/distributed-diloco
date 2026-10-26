@@ -105,7 +105,15 @@ P0/P1 están implementados:
   holdout: inicial `eval_loss=2.500206`; DiLoCo final `2.417826`; baseline
   centralizado final `2.297088`; `loss_gap=+5.26%`, ligeramente por encima del
   umbral H1 de 3-5%. Sync medio 0.61 s/ronda, sync fraction ≈2.5%, bytes por
-  ronda ≈2.16 MB. Queda repetir con `H ∈ {20, 50, 100}`, int8 y 3 semillas.
+  ronda ≈2.16 MB.
+- F1 int8 ejecutada en GPU con Qwen2.5-0.5B-Instruct, 2 workers, `H=10`,
+  `outer_lr=0.2`, 5 rondas: inicial `2.491262`, DiLoCo `2.418675`, baseline
+  `2.297088`, `loss_gap=+5.29%`. Upload por ronda `567341-567342 B` frente a
+  `2162688 B` de delta (3.8x).
+- F1 int8+top-k al 10% ejecutada en GPU con Qwen2.5-0.5B-Instruct, 2 workers,
+  `H=10`, `outer_lr=0.2`, 5 rondas y error feedback: inicial `2.491262`,
+  DiLoCo `2.474486`, baseline `2.297088`, `loss_gap=+7.72%`. Upload por ronda
+  `544057-544059 B` (4.0x). Queda repetir con `H ∈ {20, 50, 100}` y 3 semillas.
 - F2-F6 no ejecutadas. La GPU local estaba ocupada durante el desarrollo, así
   que la validación HF fue en CPU y no sustituye a un piloto 32B/70B.
 

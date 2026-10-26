@@ -45,6 +45,8 @@ Leyenda: `[x]` hecho, `[ ]` pendiente.
 - [x] Endpoint `/v1/leave` y salida ordenada básica.
 - [ ] Tolerancia a churn.
 - [x] Retención de checkpoints (`checkpoint_retention`).
+- [x] Object store local/S3 para checkpoints.
+- [x] Script de emulación WAN (`scripts/wan_emulate.py`).
 - [ ] Object store para checkpoints grandes.
 
 ## F0 — Pipeline y equivalencia

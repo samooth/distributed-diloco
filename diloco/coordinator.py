@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 import torch
 
 from .checkpoint import Checkpoint, CheckpointStore
+from .object_store import create_object_store
 from .compression import decode_int8, decompress_state
 from .config import ExperimentConfig
 from .outer import OuterOptimizer
@@ -82,7 +83,13 @@ class Coordinator:
         self.failure: Optional[str] = None
         self.last_result: Optional[Dict[str, Any]] = None
         self.history: List[Dict[str, Any]] = []
-        self.store = CheckpointStore(config.coordinator.checkpoint_dir)
+        self.store = CheckpointStore(
+            config.coordinator.checkpoint_dir,
+            object_store=create_object_store(
+                config.coordinator.checkpoint_object_store,
+                config.coordinator.checkpoint_object_prefix,
+            ),
+        )
         self.server: Optional[_Server] = None
         self.thread: Optional[threading.Thread] = None
         self.port: Optional[int] = None

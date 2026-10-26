@@ -18,6 +18,7 @@ from typing import Any, Dict, Mapping, Optional, Union
 import torch
 from safetensors.torch import load_file, save_file
 
+from .object_store import ObjectStore, create_object_store
 from .tensor_utils import State, clone_state, hash_state
 
 FORMAT_VERSION = 1
@@ -34,11 +35,18 @@ class Checkpoint:
 
 
 class CheckpointStore:
-    def __init__(self, root: Union[str, os.PathLike[str]]) -> None:
+    def __init__(
+        self,
+        root: Union[str, os.PathLike[str]],
+        object_store: Optional[ObjectStore] = None,
+        object_prefix: str = "checkpoints",
+    ) -> None:
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.latest_file = self.root / "latest.txt"
         self.metrics_file = self.root / "metrics.jsonl"
+        self.object_store = object_store
+        self.object_prefix = object_prefix.strip("/")
 
     def _checkpoint_path(self, round_index: int) -> Path:
         return self.root / f"checkpoint-{round_index:06d}"
@@ -90,6 +98,7 @@ class CheckpointStore:
                 shutil.rmtree(target)
             os.replace(tmp, target)
             self._write_latest(round_index)
+            self._sync_checkpoint(round_index, target)
         except Exception:
             if tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
@@ -158,8 +167,35 @@ class CheckpointStore:
         if keep == 0 or len(dirs) <= keep:
             return
         for path in dirs[:-keep]:
+            try:
+                round_index = int(path.name.split("-")[-1])
+                self._delete_remote_checkpoint(round_index)
+            except ValueError:
+                pass
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
+
+    def _sync_checkpoint(self, round_index: int, path: Path) -> None:
+        if self.object_store is None:
+            return
+        prefix = f"{self.object_prefix}/checkpoint-{round_index:06d}".strip("/")
+        try:
+            for item in path.rglob("*"):
+                if item.is_file():
+                    relative = item.relative_to(path).as_posix()
+                    self.object_store.put(f"{prefix}/{relative}", item.read_bytes())
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("checkpoint object-store upload failed: %s", exc)
+
+    def _delete_remote_checkpoint(self, round_index: int) -> None:
+        if self.object_store is None:
+            return
+        prefix = f"{self.object_prefix}/checkpoint-{round_index:06d}".strip("/") + "/"
+        try:
+            for key in self.object_store.list(prefix):
+                self.object_store.delete(key)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("checkpoint object-store delete failed: %s", exc)
 
     def append_metrics(self, record: Mapping[str, Any]) -> None:
         line = json.dumps(dict(record), sort_keys=True, default=str)

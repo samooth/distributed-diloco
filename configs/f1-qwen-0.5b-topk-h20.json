@@ -1,0 +1,55 @@
+{
+  "run_id": "f1-qwen-0.5b-topk-h20",
+  "model": {
+    "kind": "hf",
+    "name_or_path": "/ai/models/Qwen2.5-0.5B-Instruct",
+    "rank": 8,
+    "alpha": 16.0,
+    "dtype": "auto",
+    "quant": "none",
+    "target_modules": [
+      "q_proj",
+      "v_proj"
+    ],
+    "max_length": 128,
+    "gradient_checkpointing": false
+  },
+  "train": {
+    "H": 20,
+    "inner_lr": 0.0001,
+    "inner_weight_decay": 0.0,
+    "outer_lr": 0.2,
+    "outer_momentum": 0.9,
+    "batch_size": 1,
+    "grad_accum": 1,
+    "max_grad_norm": 1.0,
+    "max_delta_norm": 0.0,
+    "seed": 42,
+    "reset_inner_optimizer": true,
+    "delta_compression": "int8_topk",
+    "top_k_ratio": 0.1,
+    "error_feedback": true
+  },
+  "data": {
+    "path": "/ai/models/moe-zig-lab/data/zig_dense_v5_module_clean.jsonl",
+    "eval_path": "/ai/models/moe-zig-lab/data/zig_holdout.jsonl",
+    "num_shards": 2,
+    "max_samples": 0,
+    "eval_samples": 16,
+    "eval_every": 1,
+    "shuffle": true
+  },
+  "coordinator": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "min_workers": 2,
+    "max_workers": 2,
+    "quorum": 2,
+    "round_timeout_s": 900.0,
+    "max_rounds": 5,
+    "checkpoint_dir": "runs/f1-qwen-0.5b-topk-h20",
+    "checkpoint_every": 1,
+    "token": "f1-token-topk-h20",
+    "idle_timeout_s": 900.0
+  }
+}

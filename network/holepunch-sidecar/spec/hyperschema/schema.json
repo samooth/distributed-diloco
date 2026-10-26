@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "schema": [
+    {
+      "name": "metadata",
+      "namespace": "diloco",
+      "compact": true,
+      "flagsPosition": -1,
+      "fields": [
+        {
+          "name": "key",
+          "required": true,
+          "type": "string",
+          "version": 1
+        },
+        {
+          "name": "value",
+          "required": true,
+          "type": "string",
+          "version": 1
+        },
+        {
+          "name": "updated_at",
+          "required": true,
+          "type": "uint",
+          "version": 1
+        }
+      ]
+    }
+  ]
+}

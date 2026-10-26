@@ -1,0 +1,17 @@
+{
+  "name": "diloco-holepunch-sidecar",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build:schema": "node build-schema.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "corestore": "^7.0.0",
+    "hypercore": "^11.0.0",
+    "hyperdb": "^4.0.0",
+    "hyperdrive": "^12.0.0",
+    "hyperschema": "^1.0.0",
+    "hyperswarm": "^4.0.0"
+  }
+}

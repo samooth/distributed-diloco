@@ -20,8 +20,45 @@ Tests: `22 OK`
   - DiLoCo: `2.417826`
   - baseline: `2.297088`
   - `loss_gap=+5.26%`
+- F1 real int8 (H=10, 2 workers, Qwen2.5-0.5B, 5 rondas):
+  - inicial: `2.491262`
+  - DiLoCo: `2.418675`
+  - baseline: `2.297088`
+  - `loss_gap=+5.29%`
+  - upload: `567341-567342 B` vs delta `2162688 B` (3.8x)
+- F1 real int8 (H=20, 2 workers, Qwen2.5-0.5B, 5 rondas):
+  - inicial: `2.491262`
+  - DiLoCo: `2.325399`
+  - baseline: `2.297088`
+  - `loss_gap=+1.23%`
+  - upload: `567341-567343 B` vs delta `2162688 B` (3.8x)
+- F1 real int8 (H=50, 2 workers, Qwen2.5-0.5B, 5 rondas):
+  - inicial: `2.491262`
+  - DiLoCo: `2.274715`
+  - baseline: `2.297088`
+  - `loss_gap=-0.97%`
+  - upload: `567341-567343 B` vs delta `2162688 B` (3.8x)
+- F1 real int8 (H=100, 2 workers, Qwen2.5-0.5B, 5 rondas):
+  - inicial: `2.491262`
+  - DiLoCo: `2.263300`
+  - baseline: `2.297088`
+  - `loss_gap=-1.47%`
+  - upload: `567341-567343 B` vs delta `2162688 B` (3.8x)
+- F1 real int8+top-k (H=10, 2 workers, Qwen2.5-0.5B, 5 rondas):
+  - inicial: `2.491262`
+  - DiLoCo: `2.474486`
+  - baseline: `2.297088`
+  - `loss_gap=+7.72%`
+  - upload: `544057-544059 B` vs delta `2162688 B` (4.0x)
 - int8 toy: `0.003339` vs `0.003723`, sin degradación apreciable.
 - int8 HF de 1 paso: payload `2.16 MB -> 0.54 MB` (4x), mensaje HTTP `0.567 MB` (3.8x).
+
+## Implementado adicionalmente
+
+- Sidecar opcional Holepunch en `network/holepunch-sidecar/`.
+- Emulación WAN con `scripts/wan_emulate.py`.
+- Object store local/S3 integrado en checkpoints.
+- Tests de object store, evicción, leave y retención.
 
 ## Pendiente
 
