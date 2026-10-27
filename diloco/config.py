@@ -88,6 +88,7 @@ class CoordinatorConfig:
     max_body_bytes: int = 1_073_741_824
     idle_timeout_s: float = 600.0
     allow_late_join: bool = False
+    registration_timeout_s: float = 300.0
     checkpoint_retention: int = 5
     checkpoint_object_store: str = ""
     checkpoint_object_prefix: str = "checkpoints"
@@ -194,6 +195,7 @@ def _coordinator_from_dict(raw: Mapping[str, Any]) -> CoordinatorConfig:
         max_body_bytes=int(raw.get("max_body_bytes", 1_073_741_824)),
         idle_timeout_s=float(raw.get("idle_timeout_s", 600.0)),
         allow_late_join=bool(raw.get("allow_late_join", False)),
+        registration_timeout_s=float(raw.get("registration_timeout_s", 300.0)),
         checkpoint_retention=int(raw.get("checkpoint_retention", 5)),
         checkpoint_object_store=str(raw.get("checkpoint_object_store", "")),
         checkpoint_object_prefix=str(raw.get("checkpoint_object_prefix", "checkpoints")),
@@ -278,8 +280,12 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError("train.delta_compression must be none/int8/topk/int8_topk")
     if not 0.0 < t.top_k_ratio <= 1.0:
         raise ValueError("train.top_k_ratio must be in (0, 1]")
+    if c.min_workers < 1 or c.min_workers > c.max_workers:
+        raise ValueError("coordinator.min_workers must be between 1 and max_workers")
     if c.checkpoint_retention < 0:
         raise ValueError("coordinator.checkpoint_retention must be >= 0")
+    if c.registration_timeout_s < 0:
+        raise ValueError("coordinator.registration_timeout_s must be >= 0")
     if c.tls_cert or c.tls_key:
         if not c.tls_cert or not c.tls_key:
             raise ValueError("tls_cert and tls_key must be provided together")

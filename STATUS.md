@@ -6,7 +6,8 @@ Tests: `34 OK`
 
 ## Implementado
 
-- P0/P1: config, backend toy/HF, coordinador HTTP, checkpoints, reanudación.
+- P0/P1: config, backend toy/HF, coordinador HTTP, espera de `min_workers`,
+  checkpoints, reanudación.
 - Baseline centralizado (`scripts/train_centralized.py`).
 - P2.1: compresión int8 por tensor (`train.delta_compression: "int8"`).
 - P2.2: top-k, error feedback, late join, salida ordenada, expulsión básica,

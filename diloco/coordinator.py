@@ -92,6 +92,7 @@ class Coordinator:
         )
         self.server: Optional[_Server] = None
         self.thread: Optional[threading.Thread] = None
+        self.registration_thread: Optional[threading.Thread] = None
         self.port: Optional[int] = None
 
     # ------------------------------------------------------------------ HTTP
@@ -279,6 +280,13 @@ class Coordinator:
             self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        if not self.finished and int(self.config.coordinator.min_workers) > 0:
+            self.registration_thread = threading.Thread(
+                target=self._registration_monitor,
+                name=f"diloco-registration-{self.config.run_id}",
+                daemon=True,
+            )
+            self.registration_thread.start()
         LOG.info(
             "coordinator listening on http://%s:%s (round %s/%s)",
             self.config.coordinator.host,
@@ -301,6 +309,9 @@ class Coordinator:
         if self.thread is not None:
             self.thread.join(timeout=5)
             self.thread = None
+        if self.registration_thread is not None:
+            self.registration_thread.join(timeout=5)
+            self.registration_thread = None
 
     # --------------------------------------------------------------- protocol
     def _state_meta_locked(self) -> Dict[str, Any]:
@@ -568,6 +579,30 @@ class Coordinator:
         keep = int(self.config.coordinator.checkpoint_retention)
         if keep > 0:
             self.store.prune(keep)
+
+    def _registration_monitor(self) -> None:
+        timeout = float(self.config.coordinator.registration_timeout_s)
+        min_workers = int(self.config.coordinator.min_workers)
+        deadline = time.time() + timeout if timeout > 0 else None
+        with self.cond:
+            while not self.finished and self.registration_open and len(self.registered) < min_workers:
+                if deadline is not None and time.time() >= deadline:
+                    self.failure = (
+                        f"registration timed out waiting for {min_workers} workers "
+                        f"({len(self.registered)} registered)"
+                    )
+                    self.finished = True
+                    self.cond.notify_all()
+                    return
+                wait = 0.5
+                if deadline is not None:
+                    wait = min(wait, max(0.0, deadline - time.time()))
+                self.cond.wait(timeout=wait)
+            if not self.finished and len(self.registered) >= min_workers:
+                self.registration_open = False
+                self.last_activity = time.time()
+                self.cond.notify_all()
+                LOG.info("registration closed with %s workers", len(self.registered))
 
     # ----------------------------------------------------------------- status
     def health(self) -> Dict[str, Any]:

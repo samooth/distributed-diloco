@@ -33,8 +33,8 @@ Completado en P0/P1 y parcialmente en P2:
 - Configuración validada con fingerprint de modelo, datos y entrenamiento.
 - Backend `toy` determinista para tests de CPU y backend `hf` con PEFT/QLoRA.
 - Solo se serializan parámetros entrenables; la base no se envía por la red.
-- Coordinador HTTP/1.0 con token, quórum, deadline, heartbeat, agregación
-  Nesterov y checkpoints atómicos.
+- Coordinador HTTP/1.0 con token, quórum, deadline, heartbeat, espera de
+  `min_workers`, agregación Nesterov y checkpoints atómicos.
 - Reanudación desde checkpoint y exportación previa del adaptador inicial para
   que el coordinador no cargue la base de 32B/70B.
 - Smoke test de 2 workers y validación end-to-end con Qwen2.5-0.5B en CPU/GPU.
