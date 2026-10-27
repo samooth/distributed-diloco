@@ -35,6 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sidecar-name", default="coordinator")
     parser.add_argument("--p2p-topic", help="Hyperswarm topic used to tunnel coordinator traffic")
     parser.add_argument("--p2p-target-host", default="127.0.0.1")
+    parser.add_argument("--tls-cert", default="")
+    parser.add_argument("--tls-key", default="")
+    parser.add_argument("--tls-client-ca", default="")
+    parser.add_argument("--tls-require-client-cert", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -54,6 +58,14 @@ def main() -> int:
         coordinator_cfg = replace(coordinator_cfg, checkpoint_dir=args.checkpoint_dir)
     if args.max_rounds >= 0:
         coordinator_cfg = replace(coordinator_cfg, max_rounds=args.max_rounds)
+    if args.tls_cert:
+        coordinator_cfg = replace(coordinator_cfg, tls_cert=args.tls_cert)
+    if args.tls_key:
+        coordinator_cfg = replace(coordinator_cfg, tls_key=args.tls_key)
+    if args.tls_client_ca:
+        coordinator_cfg = replace(coordinator_cfg, tls_client_ca=args.tls_client_ca)
+    if args.tls_require_client_cert:
+        coordinator_cfg = replace(coordinator_cfg, tls_require_client_cert=True)
     cfg = replace(cfg, coordinator=coordinator_cfg)
 
     checkpoint_dir = Path(cfg.coordinator.checkpoint_dir)

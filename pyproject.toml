@@ -18,6 +18,7 @@ hf = [
   "peft>=0.17,<0.22",
   "bitsandbytes>=0.45",
   "accelerate>=1.0",
+  "grpcio>=1.85.0",
 ]
 dev = ["pytest>=8"]
 

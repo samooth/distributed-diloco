@@ -22,6 +22,10 @@ from .checkpoint import Checkpoint, CheckpointStore
 from .object_store import create_object_store
 from .compression import decode_int8, decompress_state
 from .config import ExperimentConfig
+try:
+    from .grpc_transport import GrpcCoordinatorServer
+except RuntimeError:  # grpcio is optional
+    GrpcCoordinatorServer = None
 from .outer import OuterOptimizer
 from .protocol import ProtocolError, hash_blob, pack_state, unpack_state
 from .tensor_utils import (
@@ -93,10 +97,36 @@ class Coordinator:
         self.server: Optional[_Server] = None
         self.thread: Optional[threading.Thread] = None
         self.registration_thread: Optional[threading.Thread] = None
+        self.grpc_server: Optional[GrpcCoordinatorServer] = None
         self.port: Optional[int] = None
 
     # ------------------------------------------------------------------ HTTP
     def start(self) -> int:
+        if self.config.coordinator.transport == "grpc":
+            if GrpcCoordinatorServer is None:
+                raise RuntimeError("grpcio is required for transport='grpc'")
+            self.grpc_server = GrpcCoordinatorServer(
+                self,
+                self.config.coordinator.host,
+                int(self.config.coordinator.port),
+            )
+            self.port = int(self.grpc_server.port)
+            if self.registration_thread is None and not self.finished and int(self.config.coordinator.min_workers) > 0:
+                self.registration_thread = threading.Thread(
+                    target=self._registration_monitor,
+                    name=f"diloco-registration-{self.config.run_id}",
+                    daemon=True,
+                )
+                self.registration_thread.start()
+            LOG.info(
+                "gRPC coordinator listening on %s:%s (round %s/%s)",
+                self.config.coordinator.host,
+                self.port,
+                self.round_index,
+                self.config.coordinator.max_rounds,
+            )
+            return self.port
+
         coordinator = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -309,6 +339,9 @@ class Coordinator:
         if self.thread is not None:
             self.thread.join(timeout=5)
             self.thread = None
+        if self.grpc_server is not None:
+            self.grpc_server.stop()
+            self.grpc_server = None
         if self.registration_thread is not None:
             self.registration_thread.join(timeout=5)
             self.registration_thread = None

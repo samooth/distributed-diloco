@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shard-id", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--log", default="")
+    parser.add_argument("--grpc-target", help="host:port for transport='grpc'")
+    parser.add_argument("--tls-cert", default="")
+    parser.add_argument("--tls-key", default="")
+    parser.add_argument("--tls-client-ca", default="")
+    parser.add_argument("--tls-verify", action="store_true", default=None)
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -46,9 +52,12 @@ def main() -> int:
     cfg = load_config(config_path, base_dir=PROJECT_ROOT)
     if args.coordinator and (args.discover_topic or args.p2p_topic):
         raise SystemExit("use only one of --coordinator, --discover-topic or --p2p-topic")
-    if not args.coordinator and not args.discover_topic and not args.p2p_topic:
-        raise SystemExit("--coordinator, --discover-topic or --p2p-topic is required")
+    if not args.coordinator and not args.discover_topic and not args.p2p_topic and not args.grpc_target:
+        raise SystemExit("--coordinator, --discover-topic, --p2p-topic or --grpc-target is required")
     coordinator_url = args.coordinator
+    grpc_target = args.grpc_target
+    if grpc_target and not coordinator_url:
+        coordinator_url = f"grpc://{grpc_target}"
     sidecar = None
     if args.discover_topic:
         from diloco.holepunch import discover_coordinator
@@ -69,10 +78,24 @@ def main() -> int:
         sidecar.start()
         sidecar.wait_for_ready()
         coordinator_url = f"http://{args.tunnel_listen_host}:{listen_port}"
+        if cfg.coordinator.transport == "grpc":
+            coordinator_url = f"grpc://{args.tunnel_listen_host}:{listen_port}"
+            grpc_target = f"{args.tunnel_listen_host}:{listen_port}"
         logging.info("coordinator available through Hyperswarm tunnel: %s", coordinator_url)
+    if coordinator_url and coordinator_url.startswith("grpc://"):
+        grpc_target = coordinator_url[len("grpc://"):]
+        coordinator_url = f"http://{grpc_target}"
+    if args.tls_cert:
+        cfg = replace(cfg, coordinator=replace(cfg.coordinator, tls_cert=args.tls_cert))
+    if args.tls_key:
+        cfg = replace(cfg, coordinator=replace(cfg.coordinator, tls_key=args.tls_key))
+    if args.tls_client_ca:
+        cfg = replace(cfg, coordinator=replace(cfg.coordinator, tls_client_ca=args.tls_client_ca))
+    if args.tls_verify is not None:
+        cfg = replace(cfg, coordinator=replace(cfg.coordinator, tls_verify=args.tls_verify))
     log_path = Path(args.log) if args.log else Path(cfg.coordinator.checkpoint_dir) / "logs" / f"{args.node_id}.jsonl"
     backend = build_backend(cfg, shard_id=args.shard_id, device=args.device)
-    worker = Worker(cfg, args.node_id, coordinator_url, backend, log_path=str(log_path))
+    worker = Worker(cfg, args.node_id, coordinator_url, backend, log_path=str(log_path), grpc_target=grpc_target)
     try:
         summary = worker.run()
     finally:

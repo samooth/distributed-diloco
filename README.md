@@ -45,9 +45,9 @@ Completado en P0/P1 y parcialmente en P2:
 - TLS opcional, object store local/S3, emulación WAN y transporte P2P opcional.
 - Carga thread-safe del modelo HF para evitar meta-tensors con 2 workers.
 
-Límites actuales: HTTP/1.0 + token con TLS opcional y transporte P2P opcional;
-top-k, error feedback, expulsión básica, retención y object store implementados;
-falta gRPC/mTLS real, churn completo y ejecución real de 32B/70B. La validación
+Límites actuales: HTTP/1.0 + token con TLS/mTLS opcional y transporte P2P
+opcional; top-k, error feedback, expulsión básica, retención y object store
+implementados; falta churn completo y ejecución real de 32B/70B. La validación
 HF se hizo con Qwen2.5-0.5B; no sustituye a un piloto grande.
 
 ## Qué es viable y qué no
@@ -138,8 +138,8 @@ recomendable para cargas grandes.
   gRPC ni FastAPI.
 - P2.1 (int8) usa safetensors con tensores `int8` y una escala `fp32` por
   tensor. P2.2 añade top-k, error feedback, late join, salida ordenada,
-  expulsión básica, TLS opcional, object store local/S3, emulación WAN y
-  transporte P2P opcional. gRPC/HTTP2 real y churn completo siguen pendientes.
+  expulsión básica, TLS/mTLS opcional, object store local/S3, emulación WAN,
+  transporte P2P opcional y gRPC/mTLS real. Churn completo sigue pendiente.
 - Contenedores con versiones fijas de CUDA, PyTorch y bitsandbytes. La versión
   de bitsandbytes debe ser idéntica en todas las islas.
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 
 import torch
 from pathlib import Path
@@ -300,6 +302,154 @@ class LocalhostSmokeTests(unittest.TestCase):
                 self.assertIsNotNone(checkpoint)
                 assert checkpoint is not None
                 self.assertEqual(checkpoint.round, 1)
+            finally:
+                coordinator.stop()
+                worker.close()
+
+
+
+
+    def _make_tls_certs(self, root: Path) -> dict[str, str]:
+        root.mkdir(parents=True, exist_ok=True)
+        ca_key = root / "ca.key"
+        ca_cert = root / "ca.crt"
+        server_key = root / "server.key"
+        server_csr = root / "server.csr"
+        server_cert = root / "server.crt"
+        client_key = root / "client.key"
+        client_csr = root / "client.csr"
+        client_cert = root / "client.crt"
+        ext = root / "server.ext"
+        ext.write_text("subjectAltName=DNS:localhost,IP:127.0.0.1\n")
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(ca_key), "-out", str(ca_cert), "-subj", "/CN=diloco-test-ca", "-days", "2"],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**__import__("os").environ, "OPENSSL_CONF": "/etc/ssl/openssl.cnf"},
+        )
+        subprocess.run(
+            ["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-keyout", str(server_key), "-out", str(server_csr), "-subj", "/CN=localhost"],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**__import__("os").environ, "OPENSSL_CONF": "/etc/ssl/openssl.cnf"},
+        )
+        subprocess.run(
+            ["openssl", "x509", "-req", "-in", str(server_csr), "-CA", str(ca_cert), "-CAkey", str(ca_key), "-CAcreateserial", "-out", str(server_cert), "-days", "2", "-extfile", str(ext)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**__import__("os").environ, "OPENSSL_CONF": "/etc/ssl/openssl.cnf"},
+        )
+        subprocess.run(
+            ["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-keyout", str(client_key), "-out", str(client_csr), "-subj", "/CN=diloco-client"],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**__import__("os").environ, "OPENSSL_CONF": "/etc/ssl/openssl.cnf"},
+        )
+        subprocess.run(
+            ["openssl", "x509", "-req", "-in", str(client_csr), "-CA", str(ca_cert), "-CAkey", str(ca_key), "-CAcreateserial", "-out", str(client_cert), "-days", "2"],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**__import__("os").environ, "OPENSSL_CONF": "/etc/ssl/openssl.cnf"},
+        )
+        return {
+            "ca": str(ca_cert),
+            "server_cert": str(server_cert),
+            "server_key": str(server_key),
+            "client_cert": str(client_cert),
+            "client_key": str(client_key),
+        }
+
+    def test_single_worker_grpc_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-grpc",
+                model=ModelConfig(kind="toy", in_features=16, out_features=8, rank=4, alpha=4.0),
+                train=TrainConfig(H=5, inner_lr=0.05, batch_size=8, seed=42),
+                data=DataConfig(num_shards=1, eval_samples=32, eval_every=1),
+                coordinator=CoordinatorConfig(
+                    host="127.0.0.1",
+                    port=0,
+                    min_workers=1,
+                    max_workers=1,
+                    quorum=1,
+                    round_timeout_s=15.0,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    checkpoint_every=1,
+                    token="unit-token",
+                    idle_timeout_s=30.0,
+                    transport="grpc",
+                ),
+            )
+            state, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, adapter_meta)
+            port = coordinator.start()
+            worker = Worker(
+                config,
+                "node-0",
+                f"grpc://127.0.0.1:{port}",
+                build_backend(config, shard_id=0, device="cpu"),
+                log_path=str(Path(tmp) / "node-0.jsonl"),
+                grpc_target=f"127.0.0.1:{port}",
+            )
+            try:
+                summary = worker.run()
+                self.assertEqual(summary["rounds_done"], 1)
+                self.assertLess(summary["final_eval_loss"], summary["initial_eval_loss"])
+                self.assertTrue(coordinator.status()["finished"])
+                self.assertIsNone(coordinator.status()["failure"])
+                checkpoint = CheckpointStore(tmp).load_latest()
+                self.assertIsNotNone(checkpoint)
+                assert checkpoint is not None
+                self.assertEqual(checkpoint.round, 1)
+            finally:
+                coordinator.stop()
+                worker.close()
+
+    def test_single_worker_grpc_tls_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            certs = self._make_tls_certs(Path(tmp) / "certs")
+            base = ExperimentConfig(
+                run_id="unit-grpc-tls",
+                model=ModelConfig(kind="toy", in_features=16, out_features=8, rank=4, alpha=4.0),
+                train=TrainConfig(H=5, inner_lr=0.05, batch_size=8, seed=42),
+                data=DataConfig(num_shards=1, eval_samples=32, eval_every=1),
+                coordinator=CoordinatorConfig(
+                    host="127.0.0.1",
+                    port=0,
+                    min_workers=1,
+                    max_workers=1,
+                    quorum=1,
+                    round_timeout_s=15.0,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    checkpoint_every=1,
+                    token="unit-token",
+                    idle_timeout_s=30.0,
+                    transport="grpc",
+                    tls_cert=certs["server_cert"],
+                    tls_key=certs["server_key"],
+                    tls_client_ca=certs["ca"],
+                    tls_require_client_cert=True,
+                ),
+            )
+            state, base_hash, adapter_meta = initial_adapter_state(base, device="cpu")
+            coordinator = Coordinator(base, state, base_hash, adapter_meta)
+            port = coordinator.start()
+            worker_config = replace(
+                base,
+                coordinator=replace(
+                    base.coordinator,
+                    tls_cert=certs["client_cert"],
+                    tls_key=certs["client_key"],
+                    tls_client_ca=certs["ca"],
+                    tls_verify=True,
+                ),
+            )
+            worker = Worker(
+                worker_config,
+                "node-0",
+                f"grpc://127.0.0.1:{port}",
+                build_backend(worker_config, shard_id=0, device="cpu"),
+                log_path=str(Path(tmp) / "node-0.jsonl"),
+                grpc_target=f"127.0.0.1:{port}",
+            )
+            try:
+                summary = worker.run()
+                self.assertEqual(summary["rounds_done"], 1)
+                self.assertLess(summary["final_eval_loss"], summary["initial_eval_loss"])
+                self.assertTrue(coordinator.status()["finished"])
+                self.assertIsNone(coordinator.status()["failure"])
             finally:
                 coordinator.stop()
                 worker.close()

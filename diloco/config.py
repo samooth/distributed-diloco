@@ -89,6 +89,7 @@ class CoordinatorConfig:
     idle_timeout_s: float = 600.0
     allow_late_join: bool = False
     registration_timeout_s: float = 300.0
+    transport: str = "http"
     checkpoint_retention: int = 5
     checkpoint_object_store: str = ""
     checkpoint_object_prefix: str = "checkpoints"
@@ -196,6 +197,7 @@ def _coordinator_from_dict(raw: Mapping[str, Any]) -> CoordinatorConfig:
         idle_timeout_s=float(raw.get("idle_timeout_s", 600.0)),
         allow_late_join=bool(raw.get("allow_late_join", False)),
         registration_timeout_s=float(raw.get("registration_timeout_s", 300.0)),
+        transport=str(raw.get("transport", "http")).lower(),
         checkpoint_retention=int(raw.get("checkpoint_retention", 5)),
         checkpoint_object_store=str(raw.get("checkpoint_object_store", "")),
         checkpoint_object_prefix=str(raw.get("checkpoint_object_prefix", "checkpoints")),
@@ -286,6 +288,8 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError("coordinator.checkpoint_retention must be >= 0")
     if c.registration_timeout_s < 0:
         raise ValueError("coordinator.registration_timeout_s must be >= 0")
+    if c.transport not in ("http", "grpc"):
+        raise ValueError("coordinator.transport must be 'http' or 'grpc'")
     if c.tls_cert or c.tls_key:
         if not c.tls_cert or not c.tls_key:
             raise ValueError("tls_cert and tls_key must be provided together")

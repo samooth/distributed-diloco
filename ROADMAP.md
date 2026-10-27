@@ -45,8 +45,6 @@ Leyenda: `[x]` hecho, `[ ]` pendiente.
 - [x] Object store local/S3 para checkpoints.
 - [x] Emulación WAN con `scripts/wan_emulate.py`.
 - [x] Transporte P2P opcional con Hyperswarm.
-- [ ] gRPC/HTTP2 real (solo TLS opcional implementado).
-- [ ] TLS/mTLS real.
 - [ ] Tolerancia a churn.
 
 ## F0 — Pipeline y equivalencia

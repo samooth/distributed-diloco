@@ -13,7 +13,16 @@ from typing import Any, Dict, Mapping, Optional
 
 import torch
 
+try:
+    import grpc
+except ImportError:  # pragma: no cover
+    grpc = None
+
 from .backend import AdapterBackend
+try:
+    from .grpc_transport import GrpcWorkerClient
+except RuntimeError:  # grpcio is optional
+    GrpcWorkerClient = None
 from .compression import compress_state, decompress_state
 from .config import ExperimentConfig
 from .protocol import pack_message, unpack_message
@@ -36,11 +45,14 @@ class Worker:
         coordinator_url: str,
         backend: AdapterBackend,
         log_path: Optional[str] = None,
+        grpc_target: Optional[str] = None,
     ) -> None:
         self.config = config
         self.node_id = str(node_id)
         self.coordinator_url = coordinator_url.rstrip("/")
         self.backend = backend
+        self.grpc_target = grpc_target
+        self._grpc: Optional[GrpcWorkerClient] = None
         self.log_path = Path(log_path) if log_path else None
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +89,35 @@ class Worker:
             pass
         return context
 
+    def _get_grpc_client(self) -> Optional[GrpcWorkerClient]:
+        if self.config.coordinator.transport != "grpc":
+            return None
+        if GrpcWorkerClient is None:
+            raise CoordinatorError(0, "grpcio is required for transport='grpc'")
+        if self._grpc is None:
+            target = self.grpc_target
+            if not target:
+                url = self.coordinator_url
+                if url.startswith("grpc://"):
+                    target = url[len("grpc://"):]
+                elif url.startswith("http://"):
+                    target = url[len("http://"):]
+                elif url.startswith("https://"):
+                    target = url[len("https://"):]
+                else:
+                    target = url
+            if not target:
+                raise CoordinatorError(0, "gRPC target is required")
+            self._grpc = GrpcWorkerClient(
+                target=target,
+                token=self.config.coordinator.token,
+                tls_cert=self.config.coordinator.tls_cert,
+                tls_key=self.config.coordinator.tls_key,
+                tls_client_ca=self.config.coordinator.tls_client_ca,
+                tls_verify=self.config.coordinator.tls_verify,
+            )
+        return self._grpc
+
     def _request(
         self,
         method: str,
@@ -111,6 +152,13 @@ class Worker:
             raise CoordinatorError(0, f"cannot reach coordinator: {exc.reason}") from exc
 
     def register(self) -> Dict[str, Any]:
+        client = self._get_grpc_client()
+        if client is not None:
+            return client.register(
+                node_id=self.node_id,
+                config_hash=self.config.fingerprint(),
+                base_hash=self.backend.base_fingerprint(),
+            )
         body = json.dumps(
             {
                 "node_id": self.node_id,
@@ -145,16 +193,31 @@ class Worker:
     def _heartbeat_loop(self) -> None:
         while not self._heartbeat_stop.wait(self._heartbeat_interval):
             query = urllib.parse.urlencode({"node_id": self.node_id})
-            try:
-                self._request("GET", f"/v1/heartbeat?{query}", timeout=10.0)
-            except CoordinatorError as exc:
-                if exc.status in (403, 410):
-                    return
-                LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
-            except Exception as exc:  # noqa: BLE001
-                LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
+            client = self._get_grpc_client()
+            if client is not None:
+                try:
+                    client.heartbeat(self.node_id)
+                except Exception as exc:  # noqa: BLE001
+                    if isinstance(exc, CoordinatorError) and exc.status in (403, 410):
+                        return
+                    LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
+            else:
+                try:
+                    self._request("GET", f"/v1/heartbeat?{query}", timeout=10.0)
+                except CoordinatorError as exc:
+                    if exc.status in (403, 410):
+                        return
+                    LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
+                except Exception as exc:  # noqa: BLE001
+                    LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
 
     def get_state(self) -> tuple[Dict[str, Any], Dict[str, torch.Tensor]]:
+        client = self._get_grpc_client()
+        if client is not None:
+            raw = client.get_state(self.node_id)
+            meta, state = unpack_message(raw)
+            self._validate_state(meta, state)
+            return meta, clone_state(state)
         query = urllib.parse.urlencode({"node_id": self.node_id})
         _, raw, _ = self._request("GET", f"/v1/state?{query}")
         meta, state = unpack_message(raw)
@@ -284,72 +347,156 @@ class Worker:
                 "train_seconds": train_seconds,
                 "compression": compression,
             }
-            blob = pack_message(payload_meta, upload_state)
-            query = urllib.parse.urlencode({"node_id": self.node_id, "round": round_id})
-            try:
-                _, raw, _ = self._request(
-                    "POST",
-                    f"/v1/update?{query}",
-                    blob,
-                    content_type="application/octet-stream",
-                )
-            except CoordinatorError as exc:
-                if exc.status == 409 and "stale round" in str(exc) and stale_retries < 3:
-                    stale_retries += 1
+            client = self._get_grpc_client()
+            if client is not None:
+                blob = pack_message(payload_meta, upload_state)
+                try:
+                    raw = client.submit(blob)
+                except Exception as exc:  # noqa: BLE001
+                    if grpc is not None and isinstance(exc, grpc.RpcError):
+                        status = {
+                            grpc.StatusCode.INVALID_ARGUMENT: 400,
+                            grpc.StatusCode.UNAUTHENTICATED: 401,
+                            grpc.StatusCode.PERMISSION_DENIED: 403,
+                            grpc.StatusCode.NOT_FOUND: 404,
+                            grpc.StatusCode.FAILED_PRECONDITION: 409,
+                            grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
+                            grpc.StatusCode.INTERNAL: 500,
+                            grpc.StatusCode.UNAVAILABLE: 503,
+                            grpc.StatusCode.DEADLINE_EXCEEDED: 504,
+                        }.get(exc.code(), 500)
+                        message = exc.details() or str(exc)
+                    elif isinstance(exc, CoordinatorError):
+                        status = exc.status
+                        message = str(exc)
+                    else:
+                        status = 500
+                        message = str(exc)
+                    mapped = CoordinatorError(status, message)
+                    if mapped.status == 409 and "stale round" in str(mapped) and stale_retries < 3:
+                        stale_retries += 1
+                        self._append_log(
+                            {
+                                "node_id": self.node_id,
+                                "round": round_id,
+                                "stale_round_retry": stale_retries,
+                                "error": str(mapped),
+                            }
+                        )
+                        LOG.warning(
+                            "%s round %s became stale; reloading global state (retry %s/3)",
+                            self.node_id,
+                            round_id,
+                            stale_retries,
+                        )
+                        new_meta, new_state = self.get_state()
+                        if int(new_meta["round"]) <= round_id:
+                            raise mapped
+                        self._residual = None
+                        meta, state = new_meta, clone_state(new_state)
+                        continue
+                    if mapped.status == 504 and "timed out" in str(mapped):
+                        run_failed = True
+                        self._append_log(
+                            {
+                                "node_id": self.node_id,
+                                "round": round_id,
+                                "error": str(mapped),
+                                "status": mapped.status,
+                                "quorum_timeout": True,
+                            }
+                        )
+                        LOG.warning("%s: %s", self.node_id, mapped)
+                        break
+                    if mapped.status == 503 and "run failed" in str(mapped):
+                        run_failed = True
+                        self._append_log(
+                            {
+                                "node_id": self.node_id,
+                                "round": round_id,
+                                "error": str(mapped),
+                                "status": mapped.status,
+                            }
+                        )
+                        LOG.warning("%s: %s", self.node_id, mapped)
+                        break
                     self._append_log(
                         {
                             "node_id": self.node_id,
                             "round": round_id,
-                            "stale_round_retry": stale_retries,
-                            "error": str(exc),
+                            "error": str(mapped),
+                            "status": mapped.status,
                         }
                     )
-                    LOG.warning(
-                        "%s round %s became stale; reloading global state (retry %s/3)",
-                        self.node_id,
-                        round_id,
-                        stale_retries,
+                    raise mapped
+            else:
+                blob = pack_message(payload_meta, upload_state)
+                query = urllib.parse.urlencode({"node_id": self.node_id, "round": round_id})
+                try:
+                    _, raw, _ = self._request(
+                        "POST",
+                        f"/v1/update?{query}",
+                        blob,
+                        content_type="application/octet-stream",
                     )
-                    new_meta, new_state = self.get_state()
-                    if int(new_meta["round"]) <= round_id:
-                        raise
-                    self._residual = None
-                    meta, state = new_meta, clone_state(new_state)
-                    continue
-                if exc.status == 504 and "timed out" in str(exc):
-                    run_failed = True
+                except CoordinatorError as exc:
+                    caught = exc
+                    if exc.status == 409 and "stale round" in str(exc) and stale_retries < 3:
+                        stale_retries += 1
+                        self._append_log(
+                            {
+                                "node_id": self.node_id,
+                                "round": round_id,
+                                "stale_round_retry": stale_retries,
+                                "error": str(exc),
+                            }
+                        )
+                        LOG.warning(
+                            "%s round %s became stale; reloading global state (retry %s/3)",
+                            self.node_id,
+                            round_id,
+                            stale_retries,
+                        )
+                        new_meta, new_state = self.get_state()
+                        if int(new_meta["round"]) <= round_id:
+                            raise
+                        self._residual = None
+                        meta, state = new_meta, clone_state(new_state)
+                        continue
+                    if exc.status == 504 and "timed out" in str(exc):
+                        run_failed = True
+                        self._append_log(
+                            {
+                                "node_id": self.node_id,
+                                "round": round_id,
+                                "error": str(exc),
+                                "status": exc.status,
+                                "quorum_timeout": True,
+                            }
+                        )
+                        LOG.warning("%s: %s", self.node_id, exc)
+                        break
+                    if exc.status == 503 and "run failed" in str(exc):
+                        run_failed = True
+                        self._append_log(
+                            {
+                                "node_id": self.node_id,
+                                "round": round_id,
+                                "error": str(exc),
+                                "status": exc.status,
+                            }
+                        )
+                        LOG.warning("%s: %s", self.node_id, exc)
+                        break
                     self._append_log(
                         {
                             "node_id": self.node_id,
                             "round": round_id,
-                            "error": str(exc),
-                            "status": exc.status,
-                            "quorum_timeout": True,
+                            "error": str(caught),
+                            "status": caught.status,
                         }
                     )
-                    LOG.warning("%s: %s", self.node_id, exc)
-                    break
-                if exc.status == 503 and "run failed" in str(exc):
-                    run_failed = True
-                    self._append_log(
-                        {
-                            "node_id": self.node_id,
-                            "round": round_id,
-                            "error": str(exc),
-                            "status": exc.status,
-                        }
-                    )
-                    LOG.warning("%s: %s", self.node_id, exc)
-                    break
-                self._append_log(
-                    {
-                        "node_id": self.node_id,
-                        "round": round_id,
-                        "error": str(exc),
-                        "status": exc.status,
-                    }
-                )
-                raise
+                    raise caught
             new_meta, new_state = unpack_message(raw)
             self._validate_state(new_meta, new_state)
             rounds_done += 1
@@ -408,6 +555,13 @@ class Worker:
         return summary
 
     def leave(self) -> None:
+        client = self._get_grpc_client()
+        if client is not None:
+            try:
+                client.leave(self.node_id)
+            except Exception:  # noqa: BLE001
+                pass
+            return
         try:
             body = json.dumps({"node_id": self.node_id}).encode("utf-8")
             self._request("POST", "/v1/leave", body)

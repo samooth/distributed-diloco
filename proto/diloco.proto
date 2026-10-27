@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package diloco;
+
+service Coordinator {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc GetState(StateRequest) returns (StateResponse);
+  rpc Submit(SubmitRequest) returns (StateResponse);
+  rpc Leave(LeaveRequest) returns (LeaveResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message RegisterRequest {
+  string node_id = 1;
+  string config_hash = 2;
+  string base_hash = 3;
+}
+
+message RegisterResponse {
+  bool ok = 1;
+  string node_id = 2;
+  int64 round = 3;
+  int64 global_step = 4;
+  int32 h = 5;
+  int64 max_rounds = 6;
+  bool done = 7;
+  string state_hash = 8;
+  repeated string registered = 9;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  int64 round = 2;
+  int32 pending_updates = 3;
+}
+
+message StateRequest {
+  string node_id = 1;
+}
+
+message StateResponse {
+  bytes payload = 1;
+}
+
+message SubmitRequest {
+  bytes payload = 1;
+}
+
+message LeaveRequest {
+  string node_id = 1;
+}
+
+message LeaveResponse {
+  bool ok = 1;
+  bool removed = 2;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string json = 1;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  string json = 1;
+}
