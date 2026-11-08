@@ -179,6 +179,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-EOF
-chmod +x scripts/tui_wizard.py
-.venv/bin/python -m py_compile scripts/tui_wizard.py && echo compile_ok
