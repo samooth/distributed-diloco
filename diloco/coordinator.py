@@ -214,7 +214,7 @@ class Coordinator:
                         self._send_json(200, coordinator.health())
                         return
                     self._authorize()
-                    if route == "/v1/metrics":
+                    if route in ("/v1/metrics", "/v1/status"):
                         self._send_json(200, coordinator.status())
                         return
                     if route == "/v1/heartbeat":
