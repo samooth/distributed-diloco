@@ -60,11 +60,14 @@ Para HF (4B):
 La forma más fácil de empezar sin teclear comandos manualmente:
 
 ```bash
+# Wizard clásico (prompts)
 .venv/bin/python scripts/wizard.py
+
+# Wizard TUI (flechas, sin escribir)
+.venv/bin/python scripts/tui_wizard.py
 ```
 
-El wizard pregunta por modelo, datos, sala Hyperswarm, token y device, y genera
-el config + los comandos exactos para coordinador y workers.
+Ambos generan el config + los comandos exactos para coordinador y workers.
 
 ## Resultados (resumen)
 
