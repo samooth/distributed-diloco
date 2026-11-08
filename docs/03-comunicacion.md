@@ -337,3 +337,48 @@ Pasos:
 - No hashear la base y aceptar un nodo con otra cuantización.
 - Serializar con `pickle` “porque es más rápido”.
 - Medir el tiempo de sync sin incluir la agregación en el coordinador.
+
+## 11. Transporte Hyperswarm (sin IPs)
+
+Hyperswarm permite que coordinador y workers se encuentren por un **topic**
+(cadena de texto) en lugar de IPs. El topic se hashea a SHA-256 y se usa en
+la DHT de Hyperswarm para descubrimiento y NAT traversal.
+
+### Cómo se usa en este repo
+
+- `run_coordinator.py --p2p-topic <topic>`: levanta un túnel servidor que
+  reenvía el tráfico al puerto del coordinador.
+- `run_worker.py --p2p-topic <topic> --tunnel-listen-port 18080`: levanta un
+  túnel cliente que abre un puerto local (`127.0.0.1:18080`) y reenvía al
+  coordinador a través del swarm.
+- El worker se conecta a `http://127.0.0.1:18080` sin conocer la IP del
+  coordinador.
+
+### Implementación
+
+- `network/holepunch-sidecar/index.js`: modos `tunnel-server`, `tunnel-client`,
+  `announce`. Usa Hyperswarm para discovery y reenvío TCP.
+- `diloco/holepunch.py`: wrapper `HolepunchSidecar` que lanza el proceso Node
+  y espera el evento `ready`.
+- El tráfico HTTP/gRPC va cifrado por Hyperswarm (Noise protocol) sobre el
+  túnel; la autenticación de aplicación sigue siendo el token del coordinador.
+
+### Limitaciones
+
+- NAT simétrico puede requerir relay automático de Hyperswarm.
+- El túnel añade un salto; aceptable para DiLoCo (sync cada `H` pasos).
+- El navegador no puede unirse a Hyperswarm directamente; la consola web se
+  conecta al túnel local o al coordinador por IP.
+
+### Ejemplo
+
+```bash
+# Coordinador (máquina A)
+.venv/bin/python scripts/run_coordinator.py --config configs/qwen3-4b-2nodes.json \
+  --device cuda --reset --max-rounds 3 --no-wait --p2p-topic diloco-run-4b
+
+# Worker (máquina B)
+.venv/bin/python scripts/run_worker.py --config configs/qwen3-4b-2nodes.json \
+  --node-id node-1 --shard-id 1 --p2p-topic diloco-run-4b \
+  --tunnel-listen-port 18080 --device cuda
+```
