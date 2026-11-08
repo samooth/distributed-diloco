@@ -36,16 +36,16 @@ cd distributed-diloco
 
 El entorno virtual usado en desarrollo está en:
 ```
-/ai/models/moe-zig-lab/hf-venv
+.venv
 ```
 Si no existe, créalo:
 ```bash
-python3 -m venv /ai/models/moe-zig-lab/hf-venv
-/ai/models/moe-zig-lab/hf-venv/bin/pip install -e .
-/ai/models/moe-zig-lab/hf-venv/bin/pip install torch transformers peft bitsandbytes accelerate safetensors datasets
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/pip install torch transformers peft bitsandbytes accelerate safetensors datasets
 ```
 
-Para el resto de esta guía usaremos `PYTHON=/ai/models/moe-zig-lab/hf-venv/bin/python`.
+Para el resto de esta guía usaremos `PYTHON=.venv/bin/python`.
 
 ## 5. Modelos y datos
 

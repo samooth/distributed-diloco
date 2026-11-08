@@ -292,18 +292,18 @@
       </div>
       <div class="code-block">
         <pre><code># Tests
-/ai/models/moe-zig-lab/hf-venv/bin/python -m unittest discover -s tests -q
+.venv/bin/python -m unittest discover -s tests -q
 
 # Smoke 2 islas (toy, 4 rondas)
-/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
+.venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
 
 # HF 4B (QLoRA, 1 ronda)
-/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py \
+.venv/bin/python scripts/smoke_local.py \
   --config configs/qwen3-4b-single.json --workers 1 --rounds 1 --device cuda
 
 # Modo multi-proceso
-/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4
-/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:PORT</code></pre>
+.venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4
+.venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:PORT</code></pre>
       </div>
     </section>
 

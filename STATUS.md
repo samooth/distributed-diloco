@@ -2,7 +2,7 @@
 
 Repo: `/ai/repos/2026/distributed-diloco`
 Commit: `f4b5bc3 feat: add real gRPC/mTLS transport`
-Tests: `36 OK` (entorno `/ai/models/moe-zig-lab/hf-venv`)
+Tests: `36 OK` (entorno `.venv`)
 
 ## Implementado
 
@@ -63,10 +63,10 @@ Tests: `36 OK` (entorno `/ai/models/moe-zig-lab/hf-venv`)
 ## Comandos útiles
 
 ```bash
-/ai/models/moe-zig-lab/hf-venv/bin/python -m unittest discover -s tests -q
-/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py --config configs/smoke.json --reset --rounds 4 --workers 2 --device cpu
-/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4 --p2p-topic diloco-exp --no-wait
-/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --p2p-topic diloco-exp --shard-id 0 --device cuda --tunnel-listen-port 18183
+.venv/bin/python -m unittest discover -s tests -q
+.venv/bin/python scripts/smoke_local.py --config configs/smoke.json --reset --rounds 4 --workers 2 --device cpu
+.venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4 --p2p-topic diloco-exp --no-wait
+.venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --p2p-topic diloco-exp --shard-id 0 --device cuda --tunnel-listen-port 18183
 ```
 
 ## Entorno

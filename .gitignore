@@ -8,3 +8,7 @@ network/**/node_modules/
 
 # Working area / scratchpads
 tmp/
+
+# Local virtual environment
+.venv/
+venv/
