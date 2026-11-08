@@ -156,4 +156,10 @@ $("disconnect").addEventListener("click", () => {
 
 $("clear-logs").addEventListener("click", () => { $("logs").innerHTML = ""; });
 
+// Auto-fill from URL params
+const params = new URLSearchParams(window.location.search);
+if (params.get("coord")) $("coord-url").value = params.get("coord");
+if (params.get("gw")) $("gw-url").value = params.get("gw");
+if (params.get("token")) $("token").value = params.get("token");
+
 log("Network monitor listo. Conecta coordinador y gateway.", "info");

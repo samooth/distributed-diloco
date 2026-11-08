@@ -362,10 +362,15 @@ document.querySelector("[data-skip]").addEventListener("click", () => {
   localStorage.setItem("diloco-wizard-done", "1");
 }, { once: true });
 
-// Restore saved settings
+// Auto-fill from URL params or saved settings
+const params = new URLSearchParams(window.location.search);
+const paramUrl = params.get("url");
+const paramToken = params.get("token");
 const savedUrl = localStorage.getItem("diloco-url");
 const savedToken = localStorage.getItem("diloco-token");
-if (savedUrl) $("url").value = savedUrl;
-if (savedToken) $("token").value = savedToken;
+if (paramUrl) $("url").value = paramUrl;
+else if (savedUrl) $("url").value = savedUrl;
+if (paramToken) $("token").value = paramToken;
+else if (savedToken) $("token").value = savedToken;
 
 log("Dashboard listo. Introduce URL y token, luego pulsa Conectar.", "info");

@@ -122,8 +122,11 @@ async function tunnelServer() {
   const discovery = swarm.join(topicBuffer(topic), { server: true, client: false })
   swarm.on('connection', (conn, info) => {
     const target = net.connect(targetPort, targetHost)
-    conn.pipe(target)
-    target.pipe(conn)
+    target.setNoDelay(true)
+    conn.setNoDelay(true)
+    const { pipeline } = require('node:stream')
+    pipeline(conn, target, (err) => { if (err) console.error('tunnel c->s error', err.message) })
+    pipeline(target, conn, (err) => { if (err) console.error('tunnel s->c error', err.message) })
     const close = () => { try { conn.destroy() } catch {} ; try { target.destroy() } catch {} }
     conn.on('close', close)
     target.on('close', close)
@@ -158,8 +161,11 @@ async function tunnelClient() {
       if (connected) return
       connected = true
       clearTimeout(timer)
-      socket.pipe(conn)
-      conn.pipe(socket)
+      socket.setNoDelay(true)
+      conn.setNoDelay(true)
+      const { pipeline } = require('node:stream')
+      pipeline(socket, conn, (err) => { if (err) console.error('tunnel c->s error', err.message) })
+      pipeline(conn, socket, (err) => { if (err) console.error('tunnel s->c error', err.message) })
       const close = () => { try { socket.destroy() } catch {} ; try { conn.destroy() } catch {} ; try { swarm.destroy() } catch {} }
       socket.on('close', close)
       conn.on('close', close)
