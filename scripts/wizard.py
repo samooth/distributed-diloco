@@ -75,7 +75,8 @@ def main() -> int:
     data_path = ask_path("Ruta del dataset JSONL", must_exist=True)
     eval_path = ask_path("Ruta del holdout JSONL", must_exist=True)
 
-    topic = ask("Nombre de la sala Hyperswarm", "diloco-run")
+    transport = ask_choice("Transporte", ["direct", "hyperswarm"], "hyperswarm")
+    topic = ask("Nombre de la sala Hyperswarm", "diloco-run") if transport == "hyperswarm" else ""
     token = ask("Token del coordinador", "change-me-now")
     device = ask_choice("Device", ["cpu", "cuda"], "cuda")
     H = ask_int("Pasos locales por ronda (H)", 4)
@@ -158,16 +159,25 @@ def main() -> int:
             print(f"# 0. Exportar adaptador inicial (solo la primera vez)")
             print(f"{py} scripts/export_initial_state.py --config configs/{run_id}.json --out {init_dir} --device {device}\n")
             print(f"# 1. Coordinador")
-            print(f"{py} scripts/run_coordinator.py --config configs/{run_id}.json --init-state {init_dir} --checkpoint-dir {checkpoint_dir} --max-rounds {rounds} --no-wait --p2p-topic {topic} --device {device}")
+            if transport == "hyperswarm":
+                print(f"{py} scripts/run_coordinator.py --config configs/{run_id}.json --init-state {init_dir} --checkpoint-dir {checkpoint_dir} --max-rounds {rounds} --no-wait --p2p-topic {topic} --device {device}")
+            else:
+                print(f"{py} scripts/run_coordinator.py --config configs/{run_id}.json --init-state {init_dir} --checkpoint-dir {checkpoint_dir} --max-rounds {rounds} --no-wait --device {device}")
         else:
             print(f"# 1. Coordinador")
-            print(f"{py} scripts/run_coordinator.py --config configs/{run_id}.json --checkpoint-dir {checkpoint_dir} --max-rounds {rounds} --no-wait --p2p-topic {topic} --device {device}")
+            if transport == "hyperswarm":
+                print(f"{py} scripts/run_coordinator.py --config configs/{run_id}.json --checkpoint-dir {checkpoint_dir} --max-rounds {rounds} --no-wait --p2p-topic {topic} --device {device}")
+            else:
+                print(f"{py} scripts/run_coordinator.py --config configs/{run_id}.json --checkpoint-dir {checkpoint_dir} --max-rounds {rounds} --no-wait --device {device}")
         print()
 
     if role in ("worker", "both"):
         for i in range(workers):
             print(f"# Worker {i}")
-            print(f"{py} scripts/run_worker.py --config configs/{run_id}.json --node-id node-{i} --shard-id {i} --p2p-topic {topic} --tunnel-listen-port {18080 + i} --device {device} --log {checkpoint_dir}/logs/node-{i}.jsonl")
+            if transport == "hyperswarm":
+                print(f"{py} scripts/run_worker.py --config configs/{run_id}.json --node-id node-{i} --shard-id {i} --p2p-topic {topic} --tunnel-listen-port {18080 + i} --device {device} --log {checkpoint_dir}/logs/node-{i}.jsonl")
+            else:
+                print(f"{py} scripts/run_worker.py --config configs/{run_id}.json --node-id node-{i} --shard-id {i} --coordinator http://<IP-coordinador>:{port} --device {device} --log {checkpoint_dir}/logs/node-{i}.jsonl")
             print()
 
     print(f"{GREEN}Consola web:{RESET} abre web/dashboard.html y conecta a http://<ip-coordinador>:{port} con el token.\n")
@@ -180,6 +190,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nCancelado.")
         raise SystemExit(130)
-EOF
-chmod +x scripts/wizard.py
-/ai/models/moe-zig-lab/hf-venv/bin/python -m py_compile scripts/wizard.py && echo compile_ok
