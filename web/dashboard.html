@@ -27,6 +27,7 @@
         </select>
         <input id="url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" />
         <input id="token" type="password" placeholder="token" />
+        <input id="agent-url" type="text" placeholder="agent http://127.0.0.1:8765" value="http://127.0.0.1:8765" />
         <select id="interval">
           <option value="2000">2s</option>
           <option value="5000">5s</option>
@@ -56,6 +57,23 @@
           <span id="chart-meta" class="panel-meta">sin datos</span>
         </div>
         <canvas id="chart" height="180"></canvas>
+      </section>
+
+      <section class="panel panel-full">
+        <div class="panel-head">
+          <h2>Launcher (procesos)</h2>
+          <div class="panel-actions">
+            <button id="launch-coord" class="btn btn-primary btn-sm">Lanzar coordinador</button>
+            <button id="launch-worker" class="btn btn-ghost btn-sm">Lanzar worker</button>
+            <button id="refresh-procs" class="btn btn-ghost btn-sm">Refrescar</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="procs-table">
+            <thead><tr><th>ID</th><th>PID</th><th>Estado</th><th>Comando</th><th>Acción</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="grid">

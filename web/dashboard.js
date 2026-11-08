@@ -373,4 +373,80 @@ else if (savedUrl) $("url").value = savedUrl;
 if (paramToken) $("token").value = paramToken;
 else if (savedToken) $("token").value = savedToken;
 
+// Launcher (agent)
+async function agentFetch(path, opts = {}) {
+  const base = $("agent-url").value.trim().replace(/\/$/, "");
+  const res = await fetch(base + path, opts);
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json();
+}
+
+async function refreshProcs() {
+  try {
+    const procs = await agentFetch("/processes");
+    const tb = document.querySelector("#procs-table tbody");
+    tb.innerHTML = "";
+    if (procs.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="5" class="empty">Sin procesos lanzados</td>`;
+      tb.appendChild(tr);
+      return;
+    }
+    procs.forEach((p) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${p.id}</td>
+        <td class="mono">${p.pid}</td>
+        <td>${p.running ? '<span class="pill pill-ok">running</span>' : '<span class="pill pill-idle">stopped</span>'}</td>
+        <td class="mono" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml((p.cmd || []).join(" "))}</td>
+        <td><button class="btn btn-ghost btn-sm" data-stop="${p.id}">Stop</button></td>`;
+      tb.appendChild(tr);
+    });
+    tb.querySelectorAll("[data-stop]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        try { await agentFetch("/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.stop }) }); log(`Proceso ${b.dataset.stop} detenido`, "warn"); refreshProcs(); }
+        catch (e) { log(`Error al detener: ${e.message}`, "err"); }
+      });
+    });
+  } catch (e) {
+    log(`Agent error: ${e.message}`, "err");
+  }
+}
+
+$("launch-coord").addEventListener("click", async () => {
+  const payload = {
+    config: "configs/qwen3-4b-2nodes.json",
+    max_rounds: 3,
+    device: "cuda",
+    init_state: "runs/init-qwen3-4b-2nodes",
+    p2p_topic: "diloco-run-4b",
+  };
+  try {
+    const r = await agentFetch("/launch/coordinator", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    log(`Coordinador lanzado: ${r.id}`, "info");
+    refreshProcs();
+  } catch (e) { log(`Error lanzando coordinador: ${e.message}`, "err"); }
+});
+
+$("launch-worker").addEventListener("click", async () => {
+  const nodeId = prompt("Node ID", "node-0");
+  const shardId = parseInt(prompt("Shard ID", "0"), 10);
+  const payload = {
+    config: "configs/qwen3-4b-2nodes.json",
+    node_id: nodeId,
+    shard_id: shardId,
+    device: "cuda",
+    p2p_topic: "diloco-run-4b",
+    tunnel_listen_port: 18080 + shardId,
+  };
+  try {
+    const r = await agentFetch("/launch/worker", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    log(`Worker lanzado: ${r.id}`, "info");
+    refreshProcs();
+  } catch (e) { log(`Error lanzando worker: ${e.message}`, "err"); }
+});
+
+$("refresh-procs").addEventListener("click", refreshProcs);
+setInterval(refreshProcs, 5000);
+
 log("Dashboard listo. Introduce URL y token, luego pulsa Conectar.", "info");
