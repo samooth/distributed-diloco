@@ -128,6 +128,16 @@ function stopPolling() {
   if (ws) { ws.close(); ws = null; }
 }
 
+$("mode").addEventListener("change", () => {
+  const mode = $("mode").value;
+  if (mode === "hyperswarm") {
+    $("coord-url").value = "http://127.0.0.1:18080";
+    log("Modo Hyperswarm: levanta el túnel con --p2p-topic y usa 127.0.0.1:18080", "warn");
+  } else {
+    $("coord-url").value = "http://127.0.0.1:8095";
+  }
+});
+
 $("connect").addEventListener("click", () => {
   stopPolling();
   startPolling();

@@ -246,6 +246,16 @@ function stopPolling() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
+$("mode").addEventListener("change", () => {
+  const mode = $("mode").value;
+  if (mode === "hyperswarm") {
+    $("url").value = "http://127.0.0.1:18080";
+    log("Modo Hyperswarm: asegúrate de tener el túnel activo en 127.0.0.1:18080", "warn");
+  } else {
+    $("url").value = "http://127.0.0.1:8095";
+  }
+});
+
 $("connect").addEventListener("click", () => {
   stopPolling();
   startPolling();

@@ -21,6 +21,10 @@
         </div>
       </div>
       <div class="conn">
+        <select id="mode" title="Modo de conexión">
+          <option value="direct">Directo (HTTP)</option>
+          <option value="hyperswarm">Hyperswarm (túnel local)</option>
+        </select>
         <input id="coord-url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" />
         <input id="gw-url" type="text" placeholder="ws://127.0.0.1:8080" value="ws://127.0.0.1:8080" />
         <input id="token" type="password" placeholder="token" />
