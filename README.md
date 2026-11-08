@@ -254,8 +254,11 @@ puede estar ocupada: usar `--device cpu` para una prueba funcional lenta.
 Abre `web/index.html` en un navegador para ver el dashboard de presentación
 (estado, resultados, arquitectura, roadmap). Es estático: no requiere servidor.
 
-## Documentación
-| Documento | Contenido |
+## Onboarding
+
+¿Eres nuevo? Lee [`docs/ONBOARDING.md`](docs/ONBOARDING.md): de cero a tu primera ronda.
+
+## Documentación| Documento | Contenido |
 |---|---|
 | [`docs/01-algoritmo.md`](docs/01-algoritmo.md) | DiLoCo, pseudo-gradientes, hiperparámetros y variantes |
 | [`docs/02-arquitectura.md`](docs/02-arquitectura.md) | Componentes, topologías, estados de ronda y tolerancia a fallos |
