@@ -54,8 +54,10 @@ Descarga o ubica los modelos en tu directorio de modelos. Ejemplo:
 - `/ruta/a/Qwen3-4B-Thinking-2507` (pruebas serias)
 
 Dataset Zig:
-- `/ruta/a/data/zig_dense_v5_module_clean.jsonl`
-- `/ruta/a/data/zig_holdout.jsonl`
+- Incluido en el repo: `data/zig_sample.jsonl` (100 ejemplos) y
+  `data/zig_holdout_sample.jsonl` (20 ejemplos).
+- Dataset completo: `/ruta/a/data/zig_dense_v5_module_clean.jsonl` y
+  `/ruta/a/data/zig_holdout.jsonl` (ajusta las rutas en el config).
 
 Ajusta las rutas en los configs (`model.name_or_path`, `data.path`, `data.eval_path`)
 a tu instalación.
