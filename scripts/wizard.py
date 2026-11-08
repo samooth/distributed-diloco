@@ -12,6 +12,16 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt, IntPrompt
+    RICH = True
+    _console = Console()
+except Exception:  # pragma: no cover
+    RICH = False
+    _console = None
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -24,6 +34,9 @@ RESET = "\033[0m"
 
 
 def ask(prompt: str, default: str = "") -> str:
+    if RICH:
+        value = Prompt.ask(prompt, default=default or None)
+        return value or default
     suffix = f" [{default}]" if default else ""
     value = input(f"{CYAN}{prompt}{suffix}:{RESET} ").strip()
     return value or default
@@ -52,6 +65,8 @@ def ask_path(prompt: str, must_exist: bool = True) -> str:
 
 
 def ask_int(prompt: str, default: int) -> int:
+    if RICH:
+        return IntPrompt.ask(prompt, default=default)
     while True:
         value = ask(prompt, str(default))
         try:
@@ -61,8 +76,11 @@ def ask_int(prompt: str, default: int) -> int:
 
 
 def main() -> int:
-    print(f"\n{BOLD}◆ DiLoCo Wizard{RESET}")
-    print("Genera una configuración y los comandos para coordinador/workers.\n")
+    if RICH:
+        _console.print(Panel.fit("◆ DiLoCo Wizard\nGenera una configuración y los comandos para coordinador/workers.", title="Wizard"))
+    else:
+        print(f"\n{BOLD}◆ DiLoCo Wizard{RESET}")
+        print("Genera una configuración y los comandos para coordinador/workers.\n")
 
     role = ask_choice("¿Qué rol vas a ejecutar?", ["coordinator", "worker", "both"], "both")
 

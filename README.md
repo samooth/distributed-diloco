@@ -55,6 +55,17 @@ Para HF (4B):
   --config configs/qwen3-4b-single.json --workers 1 --rounds 1 --device cuda
 ```
 
+## Para comenzar (wizard)
+
+La forma más fácil de empezar sin teclear comandos manualmente:
+
+```bash
+.venv/bin/python scripts/wizard.py
+```
+
+El wizard pregunta por modelo, datos, sala Hyperswarm, token y device, y genera
+el config + los comandos exactos para coordinador y workers.
+
 ## Resultados (resumen)
 
 | Config | H=10 | H=20 | H=50 | H=100 |
