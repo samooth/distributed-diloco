@@ -221,6 +221,9 @@ class Coordinator:
                         node_id = self._query().get("node_id", "")
                         self._send_json(200, coordinator.heartbeat(node_id))
                         return
+                    if route == "/v1/state_meta":
+                        self._send_json(200, coordinator.state_meta())
+                        return
                     if route == "/v1/state":
                         node_id = self._query().get("node_id", "")
                         blob = coordinator.get_state(node_id)
@@ -374,6 +377,10 @@ class Coordinator:
             "config_hash": self.config.fingerprint(),
             "adapter_meta": self.adapter_meta,
         }
+
+    def state_meta(self) -> Dict[str, Any]:
+        with self.cond:
+            return self._state_meta_locked()
 
     def _registration_locked(self) -> Dict[str, Any]:
         return {

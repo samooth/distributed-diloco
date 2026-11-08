@@ -1,6 +1,7 @@
 """DiLoCo worker: local adapter steps + pseudo-gradient upload + global reload."""
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import threading
@@ -24,6 +25,7 @@ try:
 except RuntimeError:  # grpcio is optional
     GrpcWorkerClient = None
 from .compression import compress_state, decompress_state
+from .checkpoint import load_initial_state
 from .config import ExperimentConfig
 from .protocol import pack_message, unpack_message
 from .tensor_utils import clone_state, global_norm, hash_state, scale_state, subtract_state
@@ -46,12 +48,14 @@ class Worker:
         backend: AdapterBackend,
         log_path: Optional[str] = None,
         grpc_target: Optional[str] = None,
+        init_state_path: Optional[str] = None,
     ) -> None:
         self.config = config
         self.node_id = str(node_id)
         self.coordinator_url = coordinator_url.rstrip("/")
         self.backend = backend
         self.grpc_target = grpc_target
+        self.init_state_path = Path(init_state_path) if init_state_path else None
         self._grpc: Optional[GrpcWorkerClient] = None
         self.log_path = Path(log_path) if log_path else None
         if self.log_path is not None:
@@ -132,24 +136,41 @@ class Worker:
             headers["Content-Type"] = content_type
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
         context = self._ssl_context()
-        try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self._timeout if timeout is None else timeout,
-                context=context,
-            ) as response:
-                return int(response.status), response.read(), response.headers.get_content_type()
-        except urllib.error.HTTPError as exc:
-            raw = exc.read()
-            message = raw.decode("utf-8", errors="replace")
+        attempts = 5 if method == "GET" or path in ("/v1/register", "/v1/heartbeat", "/v1/leave") else 1
+        last_exc: Optional[Exception] = None
+        for attempt in range(attempts):
             try:
-                payload = json.loads(message)
-                message = str(payload.get("error", message))
-            except json.JSONDecodeError:
-                pass
-            raise CoordinatorError(exc.code, message) from exc
-        except urllib.error.URLError as exc:
-            raise CoordinatorError(0, f"cannot reach coordinator: {exc.reason}") from exc
+                with urllib.request.urlopen(
+                    request,
+                    timeout=self._timeout if timeout is None else timeout,
+                    context=context,
+                ) as response:
+                    return int(response.status), response.read(), response.headers.get_content_type()
+            except urllib.error.HTTPError as exc:
+                raw = exc.read()
+                message = raw.decode("utf-8", errors="replace")
+                try:
+                    payload = json.loads(message)
+                    message = str(payload.get("error", message))
+                except json.JSONDecodeError:
+                    pass
+                raise CoordinatorError(exc.code, message) from exc
+            except http.client.IncompleteRead as exc:
+                last_exc = exc
+                LOG.warning("incomplete read on %s %s (attempt %s/%s): %s bytes, retrying", method, path, attempt + 1, attempts, len(exc.partial))
+            except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, TimeoutError) as exc:
+                last_exc = exc
+                LOG.warning("connection error on %s %s (attempt %s/%s): %s", method, path, attempt + 1, attempts, exc)
+            except urllib.error.URLError as exc:
+                # URLError may wrap the above; retry for idempotent-ish requests
+                last_exc = exc
+                if attempts > 1:
+                    LOG.warning("url error on %s %s (attempt %s/%s): %s", method, path, attempt + 1, attempts, exc.reason)
+                else:
+                    raise CoordinatorError(0, f"cannot reach coordinator: {exc.reason}") from exc
+            if attempt < attempts - 1:
+                time.sleep(min(2.0 * (attempt + 1), 8.0))
+        raise CoordinatorError(0, f"request failed after {attempts} attempts: {last_exc}") from last_exc
 
     def register(self) -> Dict[str, Any]:
         client = self._get_grpc_client()
@@ -211,7 +232,63 @@ class Worker:
                 except Exception as exc:  # noqa: BLE001
                     LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
 
-    def get_state(self) -> tuple[Dict[str, Any], Dict[str, torch.Tensor]]:
+    def get_state_meta(self) -> Dict[str, Any]:
+        client = self._get_grpc_client()
+        if client is not None and hasattr(client, "get_state_meta"):
+            return client.get_state_meta(self.node_id)
+        query = urllib.parse.urlencode({"node_id": self.node_id})
+        try:
+            _, raw, _ = self._request("GET", f"/v1/state_meta?{query}")
+            return json.loads(raw.decode("utf-8"))
+        except CoordinatorError as exc:
+            if exc.status != 404:
+                raise
+        # Fallback for older coordinators: use /v1/status (small)
+        _, raw, _ = self._request("GET", "/v1/status")
+        status = json.loads(raw.decode("utf-8"))
+        return {
+            "round": int(status.get("round", 0)),
+            "global_step": int(status.get("global_step", 0)),
+            "H": int(self.config.train.H),
+            "max_rounds": int(status.get("max_rounds", self.config.coordinator.max_rounds)),
+            "done": bool(status.get("finished", False)),
+            "state_hash": str(status.get("state_hash", "")),
+            "base_hash": str(status.get("base_hash", "")),
+            "config_hash": self.config.fingerprint(),
+            "adapter_meta": status.get("adapter_meta", {}),
+        }
+
+    def _load_local_init_state(self) -> Optional[tuple[Dict[str, Any], Dict[str, torch.Tensor]]]:
+        if not self.init_state_path:
+            return None
+        try:
+            remote = self.get_state_meta()
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("%s could not fetch state_meta for local bootstrap: %s", self.node_id, exc)
+            return None
+        try:
+            state, base_hash, adapter_meta, bundle_meta = load_initial_state(self.init_state_path)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("%s could not load local init state %s: %s", self.node_id, self.init_state_path, exc)
+            return None
+        if str(remote.get("base_hash", "")) != str(base_hash):
+            return None
+        if str(remote.get("config_hash", "")) != self.config.fingerprint():
+            return None
+        if str(remote.get("state_hash", "")) != str(bundle_meta.get("state_hash", "")):
+            LOG.info("%s local init state hash does not match coordinator (round %s); downloading state", self.node_id, remote.get("round"))
+            return None
+        if str(bundle_meta.get("config_hash", "")) != self.config.fingerprint():
+            return None
+        self._validate_state(remote, state)
+        LOG.info("%s bootstrapping from local init state (round %s, hash %s)", self.node_id, remote.get("round"), remote.get("state_hash"))
+        return dict(remote), clone_state(state)
+
+    def get_state(self, download: bool = False) -> tuple[Dict[str, Any], Dict[str, torch.Tensor]]:
+        if not download:
+            local = self._load_local_init_state()
+            if local is not None:
+                return local
         client = self._get_grpc_client()
         if client is not None:
             raw = client.get_state(self.node_id)

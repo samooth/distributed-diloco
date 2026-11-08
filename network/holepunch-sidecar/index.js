@@ -9,6 +9,17 @@ const Corestore = require('corestore')
 const HyperDB = require('hyperdb')
 const dbDef = require('./spec/hyperdb')
 
+let _BitBeam, _DHT, _b4a, _b32
+function beamDeps() {
+  if (!_BitBeam) {
+    _BitBeam = require('bitbeam')
+    _DHT = require('@hyperswarm/dht')
+    _b4a = require('b4a')
+    _b32 = require('hi-base32')
+  }
+  return { BitBeam: _BitBeam, DHT: _DHT, b4a: _b4a, b32: _b32 }
+}
+
 function arg(name, fallback = null) {
   const index = process.argv.indexOf(name)
   if (index === -1) return fallback
@@ -17,6 +28,80 @@ function arg(name, fallback = null) {
 
 function topicBuffer(topic) {
   return crypto.createHash('sha256').update(String(topic)).digest()
+}
+
+function topicToBeamKey(topic) {
+  // Deterministic passphrase compatible with bitbeam v4 (base32, 32 bytes)
+  const { BitBeam } = beamDeps()
+  return BitBeam.toBase32(topicBuffer(topic))
+}
+
+// Minimal multiplexing over a duplex stream (bitbeam/DHT connection).
+// Frame: [streamId:4 BE][flags:1][len:4 BE][payload:len]
+// flags: 0=data, 1=open (no payload required), 2=end, 3=destroy
+const MUX_DATA = 0, MUX_OPEN = 1, MUX_END = 2, MUX_DESTROY = 3
+
+function createMux(stream, onOpen) {
+  const { b4a } = beamDeps()
+  const streams = new Map()
+  let buf = b4a.alloc(0)
+  let nextId = 1
+
+  function send(id, flags, payload) {
+    const body = payload ? b4a.from(payload) : b4a.alloc(0)
+    const head = b4a.alloc(9)
+    head.writeUInt32BE(id >>> 0, 0)
+    head[4] = flags
+    head.writeUInt32BE(body.length >>> 0, 5)
+    try { stream.write(b4a.concat([head, body])) } catch {}
+  }
+
+  stream.on('data', (chunk) => {
+    buf = buf.length ? b4a.concat([buf, b4a.from(chunk)]) : b4a.from(chunk)
+    while (buf.length >= 9) {
+      const id = buf.readUInt32BE(0)
+      const flags = buf[4]
+      const len = buf.readUInt32BE(5)
+      if (buf.length < 9 + len) break
+      const payload = buf.subarray(9, 9 + len)
+      buf = buf.subarray(9 + len)
+      if (flags === MUX_OPEN) {
+        if (onOpen) onOpen(id, payload)
+      } else if (flags === MUX_DATA) {
+        const s = streams.get(id)
+        if (s) try { s.write(b4a.from(payload)) } catch {}
+      } else if (flags === MUX_END) {
+        const s = streams.get(id)
+        if (s) try { s.end() } catch {}
+      } else if (flags === MUX_DESTROY) {
+        const s = streams.get(id)
+        if (s) { streams.delete(id); try { s.destroy() } catch {} }
+      }
+    }
+  })
+
+  stream.on('error', () => { for (const s of streams.values()) try { s.destroy() } catch {}; streams.clear() })
+  stream.on('close', () => { for (const s of streams.values()) try { s.destroy() } catch {}; streams.clear() })
+
+  function openStream(localSocket) {
+    const id = nextId++
+    streams.set(id, localSocket)
+    send(id, MUX_OPEN)
+    localSocket.on('data', (d) => send(id, MUX_DATA, d))
+    localSocket.on('end', () => send(id, MUX_END))
+    localSocket.on('error', () => send(id, MUX_DESTROY))
+    localSocket.on('close', () => { streams.delete(id); send(id, MUX_DESTROY) })
+  }
+
+  function bindRemote(id, localSocket) {
+    streams.set(id, localSocket)
+    localSocket.on('data', (d) => send(id, MUX_DATA, d))
+    localSocket.on('end', () => send(id, MUX_END))
+    localSocket.on('error', () => send(id, MUX_DESTROY))
+    localSocket.on('close', () => { streams.delete(id); send(id, MUX_DESTROY) })
+  }
+
+  return { send, openStream, bindRemote, streams }
 }
 
 async function announce() {
@@ -114,87 +199,69 @@ async function index() {
 }
 
 async function tunnelServer() {
+  const { BitBeam, DHT } = beamDeps()
   const topic = arg('--topic', 'diloco')
   const targetHost = arg('--target-host', '127.0.0.1')
   const targetPort = Number(arg('--target-port', '0'))
   if (!targetPort) throw new Error('--target-port is required')
-  const swarm = new Hyperswarm()
-  const discovery = swarm.join(topicBuffer(topic), { server: true, client: false })
-  swarm.on('connection', (conn, info) => {
-    const target = net.connect(targetPort, targetHost)
-    try { target.setNoDelay(true) } catch {}
-    try { if (typeof conn.setNoDelay === 'function') conn.setNoDelay(true) } catch {}
-    conn.pipe(target)
-    target.pipe(conn)
-    let destroyed = false
-    const destroy = (err) => {
-      if (destroyed) return
-      destroyed = true
-      if (err) console.error('tunnel-server error', err.message)
-      try { conn.destroy() } catch {}
-      try { target.destroy() } catch {}
+
+  const key = topicToBeamKey(topic)
+  const keyPair = DHT.keyPair(BitBeam.fromBase32(key))
+  const node = new DHT({ ephemeral: true })
+  await node.ready()
+  const server = node.createServer({
+    firewall (remotePublicKey) {
+      return !remotePublicKey.equals(keyPair.publicKey)
     }
-    conn.on('error', destroy)
-    target.on('error', destroy)
   })
-  await discovery.flushed()
-  console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server', topic, target: `${targetHost}:${targetPort}` }))
+
+  server.on('connection', (conn) => {
+    let mux
+    mux = createMux(conn, (id) => {
+      const target = net.connect(targetPort, targetHost)
+      try { target.setNoDelay(true) } catch {}
+      mux.bindRemote(id, target)
+      target.on('error', (e) => console.error('tunnel-server target error', e.message))
+    })
+    conn.on('error', (e) => console.error('tunnel-server peer error', e.message))
+  })
+
+  await server.listen(keyPair)
+  console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server', topic, key, transport: 'bitbeam', target: `${targetHost}:${targetPort}` }))
   await new Promise(() => {})
 }
 
 async function tunnelClient() {
+  const { BitBeam } = beamDeps()
   const topic = arg('--topic', 'diloco')
   const listenHost = arg('--listen-host', '127.0.0.1')
   const listenPort = Number(arg('--listen-port', '0'))
   if (!listenPort) throw new Error('--listen-port is required')
+
+  const key = topicToBeamKey(topic)
+  console.log(JSON.stringify({ event: 'connecting', mode: 'tunnel-client', topic, key, transport: 'bitbeam' }))
+
+  const beam = new BitBeam(key, { announce: false })
+  await new Promise((resolve, reject) => {
+    const onErr = (e) => { cleanup(); reject(e) }
+    const onConn = () => { cleanup(); resolve() }
+    const cleanup = () => { beam.off('connected', onConn); beam.off('error', onErr) }
+    beam.once('connected', onConn)
+    beam.once('error', onErr)
+    beam.resume() // trigger _open in streamx/duplex implementations
+  })
+
+  const mux = createMux(beam, null)
+  beam.on('error', (e) => console.error('tunnel-client beam error', e.message))
+  beam.on('close', () => console.error('tunnel-client beam closed'))
+
   const server = net.createServer((socket) => {
-    const swarm = new Hyperswarm()
-    const discovery = swarm.join(topicBuffer(topic), { server: false, client: true })
-    let connected = false
-    const finish = () => {
-      try { socket.destroy() } catch {}
-      try { swarm.destroy() } catch {}
-    }
-    const timer = setTimeout(() => {
-      if (!connected) {
-        console.log(JSON.stringify({ event: 'tunnel-error', message: 'no peer connected' }))
-        finish()
-      }
-    }, 10000)
-    swarm.on('connection', (conn, info) => {
-      if (connected) return
-      connected = true
-      clearTimeout(timer)
-      try { socket.setNoDelay(true) } catch {}
-      try { if (typeof conn.setNoDelay === 'function') conn.setNoDelay(true) } catch {}
-      socket.pipe(conn)
-      conn.pipe(socket)
-      let destroyed = false
-      const destroy = (err) => {
-        if (destroyed) return
-        destroyed = true
-        if (err) console.error('tunnel-client error', err.message)
-        try { socket.destroy() } catch {}
-        try { conn.destroy() } catch {}
-        try { swarm.destroy() } catch {}
-      }
-      socket.on('error', destroy)
-      conn.on('error', destroy)
-      socket.on('close', () => { if (!destroyed) { destroyed = true; try { conn.destroy() } catch {}; try { swarm.destroy() } catch {} } })
-      conn.on('close', () => { if (!destroyed) { destroyed = true; try { socket.destroy() } catch {}; try { swarm.destroy() } catch {} } })
-    })
-    discovery.flushed().then(() => {
-      if (!connected) {
-        console.log(JSON.stringify({ event: 'waiting-peer', topic }))
-      }
-    }).catch((error) => {
-      console.log(JSON.stringify({ event: 'tunnel-error', message: String(error) }))
-      finish()
-    })
+    try { socket.setNoDelay(true) } catch {}
+    mux.openStream(socket)
   })
   await new Promise((resolve, reject) => {
     server.listen(listenPort, listenHost, () => {
-      console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-client', topic, listen: `${listenHost}:${listenPort}` }))
+      console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-client', topic, key, transport: 'bitbeam', listen: `${listenHost}:${listenPort}` }))
       resolve()
     })
     server.on('error', reject)

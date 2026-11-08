@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--log", default="")
     parser.add_argument("--grpc-target", help="host:port for transport='grpc'")
+    parser.add_argument("--init-state", default="", help="local adapter bundle from export_initial_state.py; skips downloading global state when hash matches")
     parser.add_argument("--tls-cert", default="")
     parser.add_argument("--tls-key", default="")
     parser.add_argument("--tls-client-ca", default="")
@@ -95,7 +96,13 @@ def main() -> int:
         cfg = replace(cfg, coordinator=replace(cfg.coordinator, tls_verify=args.tls_verify))
     log_path = Path(args.log) if args.log else Path(cfg.coordinator.checkpoint_dir) / "logs" / f"{args.node_id}.jsonl"
     backend = build_backend(cfg, shard_id=args.shard_id, device=args.device)
-    worker = Worker(cfg, args.node_id, coordinator_url, backend, log_path=str(log_path), grpc_target=grpc_target)
+    init_state = args.init_state
+    if init_state:
+        init_path = Path(init_state)
+        if not init_path.is_absolute():
+            init_path = (PROJECT_ROOT / init_path).resolve()
+        init_state = str(init_path)
+    worker = Worker(cfg, args.node_id, coordinator_url, backend, log_path=str(log_path), grpc_target=grpc_target, init_state_path=init_state or None)
     try:
         summary = worker.run()
     finally:
