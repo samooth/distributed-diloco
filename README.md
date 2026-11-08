@@ -45,9 +45,10 @@ Completado en P0/P1 y parcialmente en P2:
 - TLS opcional, object store local/S3, emulación WAN y transporte P2P opcional.
 - Carga thread-safe del modelo HF para evitar meta-tensors con 2 workers.
 
-Límites actuales: HTTP/1.0 + token con TLS/mTLS opcional y transporte P2P
-opcional; top-k, error feedback, expulsión básica, retención y object store
-implementados; falta churn completo y ejecución real de 32B/70B. La validación
+Límites actuales: HTTP/1.0 + token con TLS/mTLS opcional, gRPC/mTLS real y
+transporte P2P opcional; top-k, error feedback, expulsión básica, retención y
+object store implementados; falta churn completo y ejecución real de 32B/70B.
+La validación
 HF se hizo con Qwen2.5-0.5B; no sustituye a un piloto grande.
 
 ## Qué es viable y qué no
@@ -147,6 +148,8 @@ recomendable para cargas grandes.
 
 - WireGuard/Tailscale/Netbird para NAT traversal y mTLS; evitar exponer puertos
   del coordinador directamente a internet.
+- Gateway opcional `network/diloco-gateway/` (Node.js + Hyperswarm + WebSocket)
+  para discovery, relay y distribución de artefactos sin IPs.
 - Medir con `iperf3` y `mtr`; no asumir que el ancho de banda contratado es el
   efectivo. La subida doméstica suele ser asimétrica.
 - NTP activo. Relojes sincronizados para logs y deadlines.
@@ -246,8 +249,12 @@ Para HF, exportar primero el adaptador inicial y arrancar el coordinador con
 `max_samples` y `coordinator.token` antes de usarlo. En esta máquina la GPU
 puede estar ocupada: usar `--device cpu` para una prueba funcional lenta.
 
-## Documentación
+## Presentación web
 
+Abre `web/index.html` en un navegador para ver el dashboard de presentación
+(estado, resultados, arquitectura, roadmap). Es estático: no requiere servidor.
+
+## Documentación
 | Documento | Contenido |
 |---|---|
 | [`docs/01-algoritmo.md`](docs/01-algoritmo.md) | DiLoCo, pseudo-gradientes, hiperparámetros y variantes |

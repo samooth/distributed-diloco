@@ -5,3 +5,6 @@ __pycache__/
 runs/
 
 network/**/node_modules/
+
+# Working area / scratchpads
+tmp/

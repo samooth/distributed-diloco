@@ -26,7 +26,12 @@ entender el régimen, no como benchmark de este proyecto.
   continentes, fp16 sin degradación, `H=125` casi iguala DP con 125× menos
   comunicación.
 - **Limitación:** 4 workers; `H=500` empeora; el repo ya no se mantiene.
-
+- **Nota (2026-11-03):** revisado para este proyecto. Útil como referencia de
+  implementación de DiLoCo (pseudo-gradiente, outer Nesterov, inner AdamW,
+  estrategias de espera, FSDP dentro de la isla) y de tests de all-reduce. No se
+  adopta como base: preentrenamiento full-model con hivemind DHT, sin QLoRA,
+  int8/top-k/error feedback ni WAN/object store. Para producción se evaluará
+  `prime` si se necesita descentralización real.
 ### prime / prime-diloco
 
 - **Repo:** <https://github.com/PrimeIntellect-ai/prime-diloco>

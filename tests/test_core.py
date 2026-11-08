@@ -39,6 +39,7 @@ from diloco.tensor_utils import (
     clone_state,
     cosine_to_mean,
     hash_state,
+    subtract_state,
 )
 from diloco.toy_backend import ToyBackend
 
@@ -95,6 +96,21 @@ class OuterOptimizerTests(unittest.TestCase):
         a = first.step({"w": torch.tensor([0.1, 0.1])})
         b = second.step({"w": torch.tensor([0.1, 0.1])})
         self.assertTrue(torch.allclose(a["w"], b["w"]))
+
+    def test_pseudo_gradient_sign(self):
+        # El pseudo-gradiente es global - local. Invertirlo debe mover el estado
+        # en la direccion opuesta (signo del update cambia).
+        global_state = {"w": torch.tensor([1.0, -2.0, 0.5])}
+        local_state = {"w": torch.tensor([0.5, -1.0, 1.0])}
+        pseudo_grad = subtract_state(global_state, local_state)
+        self.assertTrue(torch.allclose(pseudo_grad["w"], global_state["w"] - local_state["w"]))
+
+        outer = OuterOptimizer({k: v.clone() for k, v in global_state.items()}, lr=0.5, momentum=0.0)
+        updated = outer.step(pseudo_grad)
+        negated = OuterOptimizer({k: v.clone() for k, v in global_state.items()}, lr=0.5, momentum=0.0)
+        updated_neg = negated.step({k: -v.clone() for k, v in pseudo_grad.items()})
+        # Los updates deben ser opuestos respecto al estado inicial.
+        self.assertTrue(torch.allclose(updated["w"] + updated_neg["w"], 2 * global_state["w"], atol=1e-6))
 
 
 class AggregationTests(unittest.TestCase):

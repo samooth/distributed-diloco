@@ -255,6 +255,34 @@ class LocalhostSmokeTests(unittest.TestCase):
             self.assertEqual(info["node_id"], "node-0")
             self.assertIn("node-0", info["registered"])
 
+    def test_evicted_known_worker_can_rejoin_without_late_join(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-rejoin-no-late",
+                model=ModelConfig(kind="toy", in_features=4, out_features=2, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=4),
+                coordinator=CoordinatorConfig(
+                    min_workers=1,
+                    max_workers=2,
+                    quorum=1,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    token="unit-token",
+                    idle_timeout_s=0.01,
+                    allow_late_join=False,
+                ),
+            )
+            state, base_hash, meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, meta)
+            coordinator.register("node-0", config.fingerprint(), coordinator.base_hash)
+            time.sleep(0.03)
+            with self.assertRaises(ApiError):
+                coordinator.heartbeat("node-0")
+            info = coordinator.register("node-0", config.fingerprint(), coordinator.base_hash)
+            self.assertEqual(info["node_id"], "node-0")
+            self.assertIn("node-0", info["registered"])
+
     def test_single_worker_int8_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = ExperimentConfig(
@@ -306,8 +334,68 @@ class LocalhostSmokeTests(unittest.TestCase):
                 coordinator.stop()
                 worker.close()
 
+    def test_worker_recovers_after_mid_round_eviction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-churn",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2, alpha=4.0),
+                train=TrainConfig(H=4, inner_lr=0.05, batch_size=4, seed=7),
+                data=DataConfig(num_shards=1, eval_samples=16, eval_every=1),
+                coordinator=CoordinatorConfig(
+                    host="127.0.0.1",
+                    port=0,
+                    min_workers=1,
+                    max_workers=1,
+                    quorum=1,
+                    round_timeout_s=30.0,
+                    max_rounds=2,
+                    checkpoint_dir=tmp,
+                    checkpoint_every=1,
+                    token="unit-token",
+                    idle_timeout_s=30.0,
+                    allow_late_join=False,
+                ),
+            )
+            state, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, adapter_meta)
+            port = coordinator.start()
+            backend = build_backend(config, shard_id=0, device="cpu")
+            original_train = backend.train_steps
 
+            def slow_train(steps: int, round_index: int = 0) -> dict:
+                time.sleep(0.4)
+                return original_train(steps, round_index=round_index)
 
+            backend.train_steps = slow_train  # type: ignore[method-assign]
+            worker = Worker(
+                config,
+                "node-0",
+                f"http://127.0.0.1:{port}",
+                backend,
+                log_path=str(Path(tmp) / "node-0.jsonl"),
+            )
+            result: dict[str, Any] = {}
+
+            def runner() -> None:
+                result["summary"] = worker.run()
+
+            thread = threading.Thread(target=runner, daemon=True)
+            thread.start()
+            time.sleep(0.15)
+            coordinator.leave("node-0")
+            thread.join(timeout=30.0)
+            self.assertFalse(thread.is_alive())
+            try:
+                coordinator.stop()
+            except Exception:
+                pass
+            worker.close()
+            summary = result.get("summary")
+            self.assertIsNotNone(summary)
+            assert summary is not None
+            self.assertEqual(summary["rounds_done"], 2)
+            self.assertTrue(coordinator.status()["finished"])
+            self.assertIsNone(coordinator.status()["failure"])
 
     def _make_tls_certs(self, root: Path) -> dict[str, str]:
         root.mkdir(parents=True, exist_ok=True)

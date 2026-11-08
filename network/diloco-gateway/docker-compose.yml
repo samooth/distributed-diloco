@@ -1,0 +1,67 @@
+version: "3.9"
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    environment:
+      - PORT=8080
+      - ALLOWED_ORIGINS=https://space.bsv.direct
+      - MNEE_API_KEY=${MNEE_API_KEY:-}
+      - MNEE_ENV=${MNEE_ENV:-sandbox}
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - nginx_network
+
+  nginx:
+    image: jonasal/nginx-certbot:latest
+    restart: unless-stopped
+    environment:
+      - CERTBOT_EMAIL=tomas@bsv.direct
+    env_file:
+      - ./nginx-certbot.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/www/letsencrypt:/var/www/letsencrypt
+      - /etc/letsencrypt:/etc/letsencrypt
+      - ./user_conf.d:/etc/nginx/user_conf.d
+      - /var/www:/var/www
+      - ./logs:/var/log/nginx
+      - ./nginx-gw.conf:/etc/nginx/user_conf.d/gw.conf:ro
+    networks:
+      - default
+      - nginx_network
+
+  coturn:
+    image: coturn/coturn:latest
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "49152-49252:49152-49252/udp"
+    volumes:
+      - /workspace/videoconf/turnserver.conf:/etc/turnserver.conf:ro
+    restart: unless-stopped
+    mem_limit: 256m
+    command: -c /etc/turnserver.conf
+    networks:
+      - nginx_network
+
+volumes:
+  nginx_secrets:
+  certbot_challenge:
+  cache:
+    driver: local
+  bulk-headers:
+    driver: local
+  bulk-headers-test:
+    driver: local
+
+networks:
+  nginx_network:
+    external: true

@@ -1,0 +1,17 @@
+[project]
+name = "diloco-tui"
+version = "0.1.0"
+description = "TUI dashboard for DiLoCo distributed training"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.80.0",
+    "httpx>=0.27.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+diloco-tui = "diloco_tui.app:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

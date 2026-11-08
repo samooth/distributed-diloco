@@ -31,8 +31,8 @@ Leyenda: `[x]` hecho, `[ ]` pendiente.
 - [x] Carga thread-safe del modelo HF.
 - [x] Sparsificación top-k y error feedback implementados.
 - [x] Barrido int8/top-k/error feedback de varias rondas con 2 nodos.
-- [ ] Test de signo del pseudo-gradiente.
-
+- [ ] Test de signo del pseudo-gradiente (unitario añadido; falta validación
+  integrada de divergencia con signo invertido).
 ## P2.2 — Robustez de red, nodos y transporte
 
 - [x] Rejoin con el mismo `node_id`.
@@ -45,9 +45,9 @@ Leyenda: `[x]` hecho, `[ ]` pendiente.
 - [x] Object store local/S3 para checkpoints.
 - [x] Emulación WAN con `scripts/wan_emulate.py`.
 - [x] Transporte P2P opcional con Hyperswarm.
-- [ ] Tolerancia a churn.
-
-## F0 — Pipeline y equivalencia
+- [x] gRPC/mTLS real.
+- [x] Tolerancia a churn (rejoin de nodos conocidos, recuperación 403 y test
+  integrado de caída a mitad de ronda con recuperación en <= 2 rondas).## F0 — Pipeline y equivalencia
 
 - [x] Ronda completa end-to-end.
 - [x] Checkpoint/reload.

@@ -79,6 +79,7 @@ class Coordinator:
         self.global_step = self.round_index * int(config.train.H)
         self._state_hash = hash_state(self.global_state)
         self.registered: Dict[str, Dict[str, Any]] = {}
+        self.known_nodes: set[str] = set()
         self.updates: Dict[str, Dict[str, Any]] = {}
         self.round_started_at: Optional[float] = None
         self.last_activity = time.time()
@@ -389,17 +390,22 @@ class Coordinator:
                 raise ApiError(410, "run is already finished")
             if node_id in self.registered:
                 self.registered[node_id]["last_seen"] = time.time()
+                self.known_nodes.add(node_id)
                 info = self._registration_locked()
                 info["node_id"] = node_id
                 return info
-            if not self.registration_open and not self.config.coordinator.allow_late_join:
+            rejoining = node_id in self.known_nodes
+            if not self.registration_open and not self.config.coordinator.allow_late_join and not rejoining:
                 raise ApiError(409, "run already started; late join is disabled")
-            if len(self.registered) >= int(self.config.coordinator.max_workers):
+            if len(self.registered) >= int(self.config.coordinator.max_workers) and not rejoining:
+                raise ApiError(429, "maximum number of workers reached")
+            if rejoining and len(self.registered) >= int(self.config.coordinator.max_workers):
                 raise ApiError(429, "maximum number of workers reached")
             self.registered[node_id] = {
                 "registered_at": time.time(),
                 "last_seen": time.time(),
             }
+            self.known_nodes.add(node_id)
             self.last_activity = time.time()
             info = self._registration_locked()
             info["node_id"] = node_id

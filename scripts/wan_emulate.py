@@ -26,6 +26,7 @@ async def _pipe(
     delay_ms: float,
     jitter_ms: float,
     loss: float,
+    bandwidth_kbps: float,
     label: str,
 ) -> None:
     try:
@@ -37,6 +38,9 @@ async def _pipe(
                 logging.debug("%s dropped %s bytes", label, len(chunk))
                 continue
             delay = max(0.0, delay_ms + random.uniform(-jitter_ms, jitter_ms)) / 1000.0
+            if bandwidth_kbps > 0:
+                # Serialise the chunk at the requested bandwidth.
+                delay += (len(chunk) * 8.0) / (bandwidth_kbps * 1000.0)
             if delay:
                 await asyncio.sleep(delay)
             writer.write(chunk)
@@ -59,6 +63,7 @@ async def _handle_client(
     delay_ms: float,
     jitter_ms: float,
     loss: float,
+    bandwidth_kbps: float,
 ) -> None:
     try:
         server_reader, server_writer = await asyncio.open_connection(target_host, target_port)
@@ -69,10 +74,10 @@ async def _handle_client(
         return
 
     client_to_server = asyncio.create_task(
-        _pipe(client_reader, server_writer, delay_ms, jitter_ms, loss, "client->server")
+        _pipe(client_reader, server_writer, delay_ms, jitter_ms, loss, bandwidth_kbps, "client->server")
     )
     server_to_client = asyncio.create_task(
-        _pipe(server_reader, client_writer, delay_ms, jitter_ms, loss, "server->client")
+        _pipe(server_reader, client_writer, delay_ms, jitter_ms, loss, bandwidth_kbps, "server->client")
     )
     await asyncio.gather(client_to_server, server_to_client, return_exceptions=True)
 
@@ -86,6 +91,7 @@ async def main() -> None:
     parser.add_argument("--delay-ms", type=float, default=0.0)
     parser.add_argument("--jitter-ms", type=float, default=0.0)
     parser.add_argument("--loss", type=float, default=0.0, help="packet/chunk loss probability 0..1")
+    parser.add_argument("--bandwidth-kbps", type=float, default=0.0, help="bandwidth cap in kbps (0 = unlimited)")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -105,12 +111,13 @@ async def main() -> None:
             args.delay_ms,
             args.jitter_ms,
             args.loss,
+            args.bandwidth_kbps,
         ),
         args.listen_host,
         args.listen_port,
     )
     logging.info(
-        "proxy %s:%s -> %s:%s delay=%sms jitter=%sms loss=%.3f",
+        "proxy %s:%s -> %s:%s delay=%sms jitter=%sms loss=%.3f bandwidth=%skbps",
         args.listen_host,
         args.listen_port,
         args.target_host,
@@ -118,6 +125,7 @@ async def main() -> None:
         args.delay_ms,
         args.jitter_ms,
         args.loss,
+        args.bandwidth_kbps,
     )
     async with server:
         await server.serve_forever()

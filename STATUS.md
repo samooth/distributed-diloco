@@ -1,8 +1,8 @@
 # Estado actual
 
 Repo: `/ai/repos/2026/distributed-diloco`
-Commit: `3f87241 feat: add Hyperswarm P2P transport tunnel`
-Tests: `34 OK`
+Commit: `f4b5bc3 feat: add real gRPC/mTLS transport`
+Tests: `36 OK` (entorno `/ai/models/moe-zig-lab/hf-venv`)
 
 ## Implementado
 
@@ -17,6 +17,12 @@ Tests: `34 OK`
 - Emulación WAN con `scripts/wan_emulate.py`.
 - Carga thread-safe del modelo HF para evitar meta-tensors con 2 workers.
 - `run_coordinator.py --reset`.
+- gRPC/mTLS real (transporte alternativo al HTTP/1.0).
+- Página web de presentación en `web/index.html`.
+- Gateway DiLoCo (Hyperswarm/WebSocket) integrado en
+  `network/diloco-gateway/`.
+- Adaptador Python `diloco/gateway_client.py` (`DiLoCoGatewayClient`) para
+  relay de deltas/checkpoints vía WebSocket.
 
 ## Resultados
 
@@ -48,17 +54,19 @@ Tests: `34 OK`
 
 - Barrido int8 con error feedback a `H=100`.
 - Pruebas WAN con `tc netem` y medición de CU/sync.
-- gRPC/mTLS real y churn completo.
-- Test de signo del pseudo-gradiente.
+- Churn: rejoin de nodos conocidos, recuperación 403 y test integrado de caída a
+  mitad de ronda con recuperación en <= 2 rondas.
+- Test de signo del pseudo-gradiente (unitario añadido; falta validación
+  integrada de divergencia con signo invertido).
 - Pilotos 32B/70B en nodos con GPU suficiente.
-
+- Revisión de OpenDiLoCo: útil como referencia, no base (ver docs/09).
 ## Comandos útiles
 
 ```bash
-../hf-venv/bin/python -m unittest discover -s tests -q
-../hf-venv/bin/python scripts/smoke_local.py --config configs/smoke.json --reset --rounds 4 --workers 2 --device cpu
-../hf-venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4 --p2p-topic diloco-exp --no-wait
-../hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --p2p-topic diloco-exp --shard-id 0 --device cuda --tunnel-listen-port 18183
+/ai/models/moe-zig-lab/hf-venv/bin/python -m unittest discover -s tests -q
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py --config configs/smoke.json --reset --rounds 4 --workers 2 --device cpu
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4 --p2p-topic diloco-exp --no-wait
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --p2p-topic diloco-exp --shard-id 0 --device cuda --tunnel-listen-port 18183
 ```
 
 ## Entorno

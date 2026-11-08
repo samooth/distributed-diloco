@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DiLoCo WAN — Distributed Low-Communication Training</title>
+  <meta name="description" content="Entrena adaptadores LoRA de 32B/70B sobre internet con DiLoCo: int8, top-k, error feedback, churn, WAN emulation y transporte P2P." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+    <span class="orb orb-3"></span>
+  </div>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <div class="logo">
+        <span class="logo-mark">◆</span>
+        <span class="logo-text">DiLoCo<span class="accent">WAN</span></span>
+      </div>
+      <nav class="nav-links">
+        <a href="#problema">Problema</a>
+        <a href="#arquitectura">Arquitectura</a>
+        <a href="#estado">Estado</a>
+        <a href="#resultados">Resultados</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#inicio">Inicio rápido</a>
+      </nav>
+      <a class="nav-cta" href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- HERO -->
+    <section class="hero">
+      <div class="hero-badge">v0.2 · 39 tests OK · gRPC/mTLS · churn recuperado</div>
+      <h1 class="hero-title">
+        Entrena LLMs de <span class="grad">32B / 70B</span><br />
+        sobre internet, sin datacenter.
+      </h1>
+      <p class="hero-sub">
+        DiLoCo WAN adapta modelos grandes con <strong>QLoRA</strong> sincronizando
+        solo el adaptador cada <code>H</code> pasos. int8, top-k, error feedback,
+        churn completo y emulación WAN incluidos. Hardware modesto, fibra doméstica.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#inicio">Empezar</a>
+        <a class="btn btn-ghost" href="#resultados">Ver resultados</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><span class="stat-num">39</span><span class="stat-label">tests OK</span></div>
+        <div class="stat"><span class="stat-num">4×</span><span class="stat-label">compresión int8</span></div>
+        <div class="stat"><span class="stat-num">-1.47%</span><span class="stat-label">loss gap H=100</span></div>
+        <div class="stat"><span class="stat-num">2–4</span><span class="stat-label">islas domésticas</span></div>
+      </div>
+    </section>
+
+    <!-- PROBLEMA -->
+    <section id="problema" class="section">
+      <div class="section-head">
+        <span class="eyebrow">El problema</span>
+        <h2>La latencia no es el cuello de botella. Lo son el ancho de banda, la estabilidad y la VRAM.</h2>
+      </div>
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-icon">📡</div>
+          <h3>Ancho de banda de subida</h3>
+          <p>Un delta de 70B en bf16 son 140 GB por ronda. DiLoCo amortiza la latencia
+            sincronizando cada H pasos, pero sigue moviendo el delta completo.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">🌪️</div>
+          <h3>Inestabilidad de nodos</h3>
+          <p>Nodos domésticos aparecen y desaparecen. Deadlines, expulsión, rejoin y
+            late join evitan que un straggler bloquee la ronda.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">🧠</div>
+          <h3>Memoria de GPU</h3>
+          <p>70B en NF4 ≈ 35–40 GB. QLoRA congela la base y sincroniza solo el
+            adaptador: de 140 GB a 0.07–0.8 GB por ronda.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ARQUITECTURA -->
+    <section id="arquitectura" class="section">
+      <div class="section-head">
+        <span class="eyebrow">Arquitectura</span>
+        <h2>Estrella con coordinador. Una isla = una unidad de sincronización.</h2>
+      </div>
+      <div class="arch">
+        <div class="arch-coord">
+          <div class="arch-box coord">
+            <strong>Coordinador</strong>
+            <small>membership · leases · agregación Nesterov · checkpoints · métricas</small>
+          </div>
+        </div>
+        <div class="arch-line"></div>
+        <div class="arch-islands">
+          <div class="arch-box island">
+            <strong>Isla A</strong>
+            <small>1–8 GPUs · base NF4 · LoRA local</small>
+          </div>
+          <div class="arch-box island">
+            <strong>Isla B</strong>
+            <small>1–8 GPUs · base NF4 · LoRA local</small>
+          </div>
+          <div class="arch-box island">
+            <strong>Isla C</strong>
+            <small>1–8 GPUs · base NF4 · LoRA local</small>
+          </div>
+        </div>
+        <p class="arch-note">
+          Transporte: HTTP/1.0 + token → gRPC/mTLS opcional → túnel Hyperswarm P2P.
+          Checkpoints en object store local o S3. WAN emulation con proxy TCP.
+        </p>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Una ronda, paso a paso</h3>
+          <ol class="steps">
+            <li><code>RoundStart</code>: versión global, hash de base, config, deadline.</li>
+            <li>Cada isla entrena <code>H</code> pasos locales (AdamW) y calcula <code>Δ_i = θ_global − θ_local</code>.</li>
+            <li>Subida del delta comprimido y firmado; validación de hash, ronda, shape y norma.</li>
+            <li>Agregación <code>Δ̄ = mean(Δ_i)</code>, paso Nesterov exterior → <code>θ_global'</code>.</li>
+            <li>Publicación del nuevo adaptador y manifiesto; checkpoint cada N rondas.</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3>Compresión y robustez</h3>
+          <ul class="bullets">
+            <li><strong>int8</strong> por tensor (escala fp32): 4× menos bytes.</li>
+            <li><strong>top-k</strong> + <strong>error feedback</strong> para deltas.</li>
+            <li>Late join, rejoin, salida ordenada, expulsión automática.</li>
+            <li>Retención de checkpoints y object store local/S3.</li>
+            <li>Churn completo: recuperación en ≤ 2 rondas (test integrado).</li>
+            <li>Emulación WAN: delay, jitter, pérdida y ancho de banda.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ESTADO -->
+    <section id="estado" class="section">
+      <div class="section-head">
+        <span class="eyebrow">Estado de implementación</span>
+        <h2>P0/P1 completos · P2.1/P2.2 completos · F1 en curso.</h2>
+      </div>
+      <div class="status-grid">
+        <div class="status-col">
+          <h3 class="status-title done">Implementado</h3>
+          <ul class="status-list">
+            <li>Config validada con fingerprint de modelo/datos/entrenamiento.</li>
+            <li>Backend <code>toy</code> (CPU) y <code>hf</code> (PEFT/QLoRA).</li>
+            <li>Solo parámetros entrenables se serializan (base congelada).</li>
+            <li>Coordinador HTTP/gRPC con token, quórum, deadline, heartbeat.</li>
+            <li>Espera de <code>min_workers</code>, agregación Nesterov, checkpoints atómicos.</li>
+            <li>Reanudación, exportación previa del adaptador inicial.</li>
+            <li>int8, top-k, error feedback, late join, expulsión, retención.</li>
+            <li>TLS/mTLS, object store local/S3, WAN emulation, P2P Hyperswarm.</li>
+            <li>gRPC/mTLS real y churn completo (rejoin ≤ 2 rondas).</li>
+            <li>Carga thread-safe del modelo HF (2+ workers).</li>
+          </ul>
+        </div>
+        <div class="status-col">
+          <h3 class="status-title pending">Pendiente</h3>
+          <ul class="status-list">
+            <li>Barrido int8+error feedback a H=100 (3 semillas).</li>
+            <li>Pruebas WAN con <code>tc netem</code> y medición CU/sync.</li>
+            <li>Piloto 32B QLoRA en GPU suficiente.</li>
+            <li>Piloto 70B QLoRA.</li>
+            <li>Full fine-tuning 7B/13B (FSDP2).</li>
+            <li>8–20 nodos y modelos 100B+ (investigación).</li>
+          </ul>
+        </div>
+      </div>
+      <div class="badge-row">
+        <span class="chip">39 tests OK</span>
+        <span class="chip">Python 3.11–3.13</span>
+        <span class="chip">PyTorch 2.8+</span>
+        <span class="chip">Transformers 5.x</span>
+        <span class="chip">PEFT 0.17+</span>
+        <span class="chip">RTX 3080 8 GB validado</span>
+      </div>
+    </section>
+
+    <!-- RESULTADOS -->
+    <section id="resultados" class="section">
+      <div class="section-head">
+        <span class="eyebrow">Resultados</span>
+        <h2>F1 real: Qwen2.5-0.5B, 2 workers, 5 rondas, holdout Zig.</h2>
+      </div>
+      <div class="table-wrap">
+        <table class="results">
+          <thead>
+            <tr>
+              <th>Configuración</th>
+              <th>H=10</th>
+              <th>H=20</th>
+              <th>H=50</th>
+              <th>H=100</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>DiLoCo float</td>
+              <td>+5.26%</td>
+              <td>—</td>
+              <td>—</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>int8</td>
+              <td>+5.29%</td>
+              <td>+1.23%</td>
+              <td>-0.97%</td>
+              <td>-1.47%</td>
+            </tr>
+            <tr>
+              <td>int8 + top-k 10%</td>
+              <td>+7.72%</td>
+              <td>+6.46%</td>
+              <td>+4.45%</td>
+              <td>+3.14%</td>
+            </tr>
+            <tr>
+              <td>int8 + error feedback</td>
+              <td>+7.44%</td>
+              <td>+6.02%</td>
+              <td>+3.62%</td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-caption">
+        loss gap = (DiLoCo − baseline) / baseline. Negativo = DiLoCo mejor.
+        Payload Qwen2.5-0.5B: 2.16 MB → 0.54 MB (4×) con int8; mensaje HTTP 0.567 MB (3.8×).
+        Toy: DiLoCo 0.003723 vs baseline 0.008095 (loss_gap = -54%).
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Modelos validados</h3>
+          <ul class="bullets">
+            <li>Qwen2.5-0.5B (CPU/GPU) — validación funcional.</li>
+            <li>Qwen3-4B-Thinking-2507 (GPU 8 GB, QLoRA NF4) — smoke OK.</li>
+            <li>Toy determinista — 39 tests.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Próximos modelos</h3>
+          <ul class="bullets">
+            <li>0.8B / 1.7B / 4B / 9B para iterar en hardware modesto.</li>
+            <li>32B QLoRA (GPU 24–48 GB por isla).</li>
+            <li>70B QLoRA (GPU 48–80 GB por isla).</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ROADMAP -->
+    <section id="roadmap" class="section">
+      <div class="section-head">
+        <span class="eyebrow">Roadmap</span>
+        <h2>De localhost a piloto 70B.</h2>
+      </div>
+      <div class="timeline">
+        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P0</strong> Especificación, config, esqueleto. <em>Hecho.</em></div></div>
+        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P1</strong> Backend toy/HF, coordinador, 2 islas, checkpoints, reanudación. <em>Hecho.</em></div></div>
+        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P2.1</strong> int8, top-k, error feedback, thread-safe HF. <em>Hecho.</em></div></div>
+        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P2.2</strong> Robustez: rejoin, late join, evicción, TLS, object store, WAN, P2P, gRPC/mTLS, churn. <em>Hecho.</em></div></div>
+        <div class="tl-item active"><span class="tl-dot"></span><div><strong>P3</strong> 4 islas WAN emulada, baseline centralizado, CU/sync. <em>En curso.</em></div></div>
+        <div class="tl-item"><span class="tl-dot"></span><div><strong>P4</strong> Piloto 32B QLoRA. <em>Pendiente.</em></div></div>
+        <div class="tl-item"><span class="tl-dot"></span><div><strong>P5</strong> Piloto 70B QLoRA. <em>Pendiente.</em></div></div>
+        <div class="tl-item"><span class="tl-dot"></span><div><strong>P6</strong> Endurecimiento: seguridad, stragglers, churn en producción. <em>Pendiente.</em></div></div>
+      </div>
+    </section>
+
+    <!-- INICIO RAPIDO -->
+    <section id="inicio" class="section">
+      <div class="section-head">
+        <span class="eyebrow">Inicio rápido</span>
+        <h2>De cero a una ronda en 4 comandos.</h2>
+      </div>
+      <div class="code-block">
+        <pre><code># Tests
+../hf-venv/bin/python -m unittest discover -s tests -q
+
+# Smoke 2 islas (toy, 4 rondas)
+../hf-venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
+
+# HF 4B (QLoRA, 1 ronda)
+../hf-venv/bin/python scripts/smoke_local.py \
+  --config configs/qwen3-4b-single.json --workers 1 --rounds 1 --device cuda
+
+# Modo multi-proceso
+../hf-venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4
+../hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:PORT</code></pre>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p>DiLoCo WAN · adaptación distribuida de LLMs sobre internet · Python + PyTorch + PEFT + bitsandbytes</p>
+      <p class="footer-small">Estado: P0/P1/P2 completos · P3 en curso · 39 tests OK · RTX 3080 8 GB validado</p>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

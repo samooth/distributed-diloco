@@ -1,0 +1,14 @@
+{
+  "name": "space-bsv-multiplayer-gateway",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^4.0.1",
+    "hyperswarm": "^4.17.2",
+    "ws": "^8.18.0"
+  }
+}

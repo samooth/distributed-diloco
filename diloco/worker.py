@@ -273,7 +273,17 @@ class Worker:
             self._stop_heartbeat()
 
     def _run_registered(self, info: Mapping[str, Any]) -> Dict[str, Any]:
-        meta, state = self.get_state()
+        try:
+            meta, state = self.get_state()
+        except CoordinatorError as exc:
+            if exc.status == 403:
+                try:
+                    self.register()
+                except CoordinatorError:
+                    pass
+                meta, state = self.get_state()
+            else:
+                raise
         start_round = int(meta["round"])
         max_rounds = int(meta["max_rounds"])
         LOG.info(
@@ -395,6 +405,19 @@ class Worker:
                         self._residual = None
                         meta, state = new_meta, clone_state(new_state)
                         continue
+                    if mapped.status == 403 and stale_retries < 3:
+                        stale_retries += 1
+                        try:
+                            self.register()
+                        except CoordinatorError:
+                            pass
+                        try:
+                            new_meta, new_state = self.get_state()
+                        except CoordinatorError:
+                            raise mapped
+                        self._residual = None
+                        meta, state = new_meta, clone_state(new_state)
+                        continue
                     if mapped.status == 504 and "timed out" in str(mapped):
                         run_failed = True
                         self._append_log(
@@ -460,6 +483,19 @@ class Worker:
                         new_meta, new_state = self.get_state()
                         if int(new_meta["round"]) <= round_id:
                             raise
+                        self._residual = None
+                        meta, state = new_meta, clone_state(new_state)
+                        continue
+                    if exc.status == 403 and stale_retries < 3:
+                        stale_retries += 1
+                        try:
+                            self.register()
+                        except CoordinatorError:
+                            pass
+                        try:
+                            new_meta, new_state = self.get_state()
+                        except CoordinatorError:
+                            raise caught
                         self._residual = None
                         meta, state = new_meta, clone_state(new_state)
                         continue
