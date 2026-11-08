@@ -196,19 +196,19 @@ El detalle está en [`docs/08-experimentos.md`](docs/08-experimentos.md).
 cd distributed-diloco
 
 # Tests de CPU (toy, protocolo, checkpoints, 2 islas)
-../hf-venv/bin/python -m unittest discover -s tests -v
+/ai/models/moe-zig-lab/hf-venv/bin/python -m unittest discover -s tests -v
 
 # Smoke de 2 islas en un solo proceso (4 rondas)
-../hf-venv/bin/python scripts/smoke_local.py --reset
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py --reset
 
 # F1 toy: 20 rondas x H=20 x 2 workers = 800 pasos-equivalentes
-../hf-venv/bin/python scripts/smoke_local.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py \
   --config configs/f1-toy.json --reset --rounds 20
-../hf-venv/bin/python scripts/train_centralized.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/train_centralized.py \
   --config configs/f1-toy.json --device cpu
 
 # La misma prueba con delta int8
-../hf-venv/bin/python scripts/smoke_local.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py \
   --config configs/int8-toy.json --reset --rounds 20
 ```
 
@@ -216,14 +216,14 @@ Modo con procesos separados:
 
 ```bash
 # Terminal 1
-../hf-venv/bin/python scripts/run_coordinator.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_coordinator.py \
   --config configs/smoke.json --checkpoint-dir runs/process --no-resume --max-rounds 4
 
 # Terminal 2 y 3 (copiar el PORT que imprime el coordinador)
-../hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json \
   --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:PORT \
   --log runs/process/logs/node-0.jsonl
-../hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json \
   --node-id node-1 --shard-id 1 --coordinator http://127.0.0.1:PORT \
   --log runs/process/logs/node-1.jsonl
 ```
@@ -232,14 +232,14 @@ Para HF, exportar primero el adaptador inicial y arrancar el coordinador con
 `--init-state`; así el coordinador no carga la base:
 
 ```bash
-../hf-venv/bin/python scripts/export_initial_state.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/export_initial_state.py \
   --config configs/qwen-0.5b-single.json --out runs/init-qwen --device cuda
 
-../hf-venv/bin/python scripts/run_coordinator.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_coordinator.py \
   --config configs/qwen-0.5b-single.json --init-state runs/init-qwen \
   --checkpoint-dir runs/qwen-0.5b-single --max-rounds 1
 
-../hf-venv/bin/python scripts/run_worker.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_worker.py \
   --config configs/qwen-0.5b-single.json --node-id node-0 --shard-id 0 \
   --coordinator http://127.0.0.1:PORT --device cuda
 ```

@@ -1,0 +1,17 @@
+.topology {
+  display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 20px;
+}
+.topo-coord {
+  background: var(--accent); color: #fff; padding: 12px 20px; border-radius: var(--radius);
+  font-weight: 700; box-shadow: 0 0 24px rgba(31,111,235,0.3);
+}
+.topo-nodes {
+  display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+}
+.topo-node {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 14px; font-size: 0.85rem; min-width: 120px; text-align: center;
+}
+.topo-node.active { border-color: var(--success); box-shadow: 0 0 12px rgba(22,163,74,0.2); }
+.topo-node .node-name { font-weight: 600; display: block; }
+.topo-node .node-meta { font-size: 0.7rem; color: var(--muted); }

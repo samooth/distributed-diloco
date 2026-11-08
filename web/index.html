@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <div class="bg-orbs" aria-hidden="true">
@@ -30,6 +30,8 @@
         <a href="#resultados">Resultados</a>
         <a href="#roadmap">Roadmap</a>
         <a href="#inicio">Inicio rápido</a>
+        <a href="dashboard.html">Dashboard</a>
+        <a href="network.html">Network</a>
       </nav>
       <a class="nav-cta" href="https://github.com" target="_blank" rel="noopener">GitHub</a>
     </div>
@@ -290,18 +292,18 @@
       </div>
       <div class="code-block">
         <pre><code># Tests
-../hf-venv/bin/python -m unittest discover -s tests -q
+/ai/models/moe-zig-lab/hf-venv/bin/python -m unittest discover -s tests -q
 
 # Smoke 2 islas (toy, 4 rondas)
-../hf-venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
 
 # HF 4B (QLoRA, 1 ronda)
-../hf-venv/bin/python scripts/smoke_local.py \
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/smoke_local.py \
   --config configs/qwen3-4b-single.json --workers 1 --rounds 1 --device cuda
 
 # Modo multi-proceso
-../hf-venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4
-../hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:PORT</code></pre>
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4
+/ai/models/moe-zig-lab/hf-venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:PORT</code></pre>
       </div>
     </section>
 
@@ -311,6 +313,6 @@
     </footer>
   </main>
 
-  <script src="app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>

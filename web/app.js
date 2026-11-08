@@ -32,5 +32,3 @@ window.addEventListener("scroll", () => {
 // Console easter egg
 console.log("%cDiLoCo WAN", "color:#22d3ee;font-weight:800;font-size:18px;");
 console.log("Distributed Low-Communication Training over the Internet");
-EOF
-echo written

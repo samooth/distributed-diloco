@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DiLoCo Network Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./dashboard.css" />
+  <link rel="stylesheet" href="./network.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">◆</span>
+        <div>
+          <div class="brand-title">DiLoCo Network Monitor</div>
+          <div class="brand-sub">Estado de la red Hyperswarm y nodos</div>
+        </div>
+      </div>
+      <div class="conn">
+        <input id="coord-url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" />
+        <input id="gw-url" type="text" placeholder="ws://127.0.0.1:8080" value="ws://127.0.0.1:8080" />
+        <input id="token" type="password" placeholder="token" />
+        <button id="connect" class="btn btn-primary">Conectar</button>
+        <button id="disconnect" class="btn btn-ghost" disabled>Desconectar</button>
+      </div>
+      <div id="status-pill" class="pill pill-idle">Desconectado</div>
+    </header>
+
+    <main class="main">
+      <section class="panel panel-full">
+        <div class="panel-head">
+          <h2>Topología de red</h2>
+          <span id="topo-meta" class="panel-meta">—</span>
+        </div>
+        <div id="topology" class="topology">
+          <div class="topo-coord" id="topo-coord">Coordinador</div>
+          <div id="topo-nodes" class="topo-nodes"></div>
+        </div>
+      </section>
+
+      <section class="kpis">
+        <div class="kpi"><span class="kpi-label">Nodos activos</span><span id="k-nodes" class="kpi-value">—</span></div>
+        <div class="kpi"><span class="kpi-label">Ronda</span><span id="k-round" class="kpi-value">—</span></div>
+        <div class="kpi"><span class="kpi-label">Pendientes</span><span id="k-pending" class="kpi-value">—</span></div>
+        <div class="kpi"><span class="kpi-label">Quórum</span><span id="k-quorum" class="kpi-value">—</span></div>
+        <div class="kpi"><span class="kpi-label">Peers Hyperswarm</span><span id="k-peers" class="kpi-value">—</span></div>
+        <div class="kpi"><span class="kpi-label">Estado</span><span id="k-state" class="kpi-value">—</span></div>
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Nodos</h2>
+            <span id="nodes-count" class="panel-meta">0</span>
+          </div>
+          <div class="table-wrap">
+            <table id="nodes-table">
+              <thead><tr><th>Node</th><th>Estado</th><th>Shard</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Rondas</h2>
+            <span id="rounds-count" class="panel-meta">0</span>
+          </div>
+          <div class="table-wrap">
+            <table id="rounds-table">
+              <thead><tr><th>Ronda</th><th>Nodos</th><th>Loss</th><th>Sync (s)</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel panel-full">
+        <div class="panel-head">
+          <h2>Eventos de red</h2>
+          <div class="panel-actions">
+            <button id="clear-logs" class="btn btn-ghost btn-sm">Limpiar</button>
+          </div>
+        </div>
+        <div id="logs" class="logs"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./network.js"></script>
+</body>
+</html>

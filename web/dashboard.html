@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DiLoCo Dashboard</title>
+  <meta name="description" content="Dashboard operativo para coordinadores DiLoCo: nodos, rondas, métricas y logs en tiempo real." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./dashboard.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">◆</span>
+        <div>
+          <div class="brand-title">DiLoCo Console</div>
+          <div class="brand-sub">Distributed Low-Communication Training</div>
+        </div>
+      </div>
+      <div class="conn">
+        <input id="url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" />
+        <input id="token" type="password" placeholder="token" />
+        <select id="interval">
+          <option value="2000">2s</option>
+          <option value="5000">5s</option>
+          <option value="10000">10s</option>
+        </select>
+        <button id="connect" class="btn btn-primary">Conectar</button>
+        <button id="disconnect" class="btn btn-ghost" disabled>Desconectar</button>
+      </div>
+      <div id="status-pill" class="pill pill-idle">Desconectado</div>
+      <div id="live-pill" class="live-pill">● en vivo</div>
+      <button id="theme-toggle" class="btn btn-ghost" title="Cambiar tema">🌙</button>
+    </header>
+
+    <main class="main">
+      <section class="kpis">
+        <div class="kpi"><span class="kpi-label">Ronda</span><span id="k-round" class="kpi-value">—</span><span id="k-round-sub" class="kpi-sub">—</span></div>
+        <div class="kpi"><span class="kpi-label">Nodos</span><span id="k-nodes" class="kpi-value">—</span><span id="k-nodes-sub" class="kpi-sub">quórum —</span></div>
+        <div class="kpi"><span class="kpi-label">Pendientes</span><span id="k-pending" class="kpi-value">—</span><span id="k-pending-sub" class="kpi-sub">deltas recibidos</span></div>
+        <div class="kpi"><span class="kpi-label">Loss (train)</span><span id="k-loss" class="kpi-value">—</span><canvas id="spark-loss" class="spark"></canvas><span id="k-loss-sub" class="kpi-sub">última ronda</span></div>
+        <div class="kpi"><span class="kpi-label">Delta norm</span><span id="k-delta" class="kpi-value">—</span><canvas id="spark-delta" class="spark"></canvas><span id="k-delta-sub" class="kpi-sub">agregado</span></div>
+        <div class="kpi"><span class="kpi-label">Sync</span><span id="k-sync" class="kpi-value">—</span><span id="k-sync-sub" class="kpi-sub">segundos</span></div>
+      </section>
+
+      <section class="panel panel-full">
+        <div class="panel-head">
+          <h2>Evolución por ronda</h2>
+          <span id="chart-meta" class="panel-meta">sin datos</span>
+        </div>
+        <canvas id="chart" height="180"></canvas>
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Nodos registrados</h2>
+            <span id="nodes-count" class="panel-meta">0</span>
+          </div>
+          <div class="table-wrap">
+            <table id="nodes-table">
+              <thead><tr><th>Node</th><th>Estado</th><th>Última actividad</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Historial de rondas</h2>
+            <span id="rounds-count" class="panel-meta">0</span>
+          </div>
+          <div class="table-wrap">
+            <table id="rounds-table">
+              <thead><tr><th>Ronda</th><th>Nodos</th><th>Loss</th><th>Delta norm</th><th>Sync (s)</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel panel-full">
+        <div class="panel-head">
+          <h2>Logs / eventos</h2>
+          <div class="panel-actions">
+            <button id="clear-logs" class="btn btn-ghost btn-sm">Limpiar</button>
+            <button id="export-json" class="btn btn-ghost btn-sm">Exportar JSON</button>
+          </div>
+        </div>
+        <div id="logs" class="logs"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="wizard" class="wizard-overlay">
+    <div class="wizard">
+      <div class="wizard-progress">
+        <span class="wizard-step-dot active" data-step="1"></span>
+        <span class="wizard-step-dot" data-step="2"></span>
+        <span class="wizard-step-dot" data-step="3"></span>
+        <span class="wizard-step-dot" data-step="4"></span>
+      </div>
+      <div class="wizard-body">
+        <div class="wizard-pane" data-pane="1">
+          <h2>Bienvenido a DiLoCo Console</h2>
+          <p>Este asistente te conecta a un coordinador DiLoCo en 4 pasos.</p>
+          <div class="wizard-actions">
+            <button class="btn btn-primary" data-next>Empezar</button>
+            <button class="btn btn-ghost" data-skip>Saltar</button>
+          </div>
+        </div>
+        <div class="wizard-pane" data-pane="2" hidden>
+          <h2>Paso 1 · Conexión</h2>
+          <label>URL del coordinador
+            <input id="w-url" type="text" placeholder="http://127.0.0.1:8095" />
+          </label>
+          <label>Token
+            <input id="w-token" type="password" placeholder="token" />
+          </label>
+          <div class="wizard-actions">
+            <button class="btn btn-ghost" data-back>Atrás</button>
+            <button class="btn btn-primary" data-next>Siguiente</button>
+          </div>
+        </div>
+        <div class="wizard-pane" data-pane="3" hidden>
+          <h2>Paso 2 · Verificación</h2>
+          <p id="w-test-result">Pulsa "Probar conexión" para verificar.</p>
+          <div class="wizard-actions">
+            <button class="btn btn-ghost" id="w-test">Probar conexión</button>
+            <button class="btn btn-ghost" data-back>Atrás</button>
+            <button class="btn btn-primary" data-next disabled>Siguiente</button>
+          </div>
+        </div>
+        <div class="wizard-pane" data-pane="4" hidden>
+          <h2>Paso 3 · Confirmar</h2>
+          <p id="w-summary"></p>
+          <div class="wizard-actions">
+            <button class="btn btn-ghost" data-back>Atrás</button>
+            <button class="btn btn-primary" data-finish>Conectar y guardar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="toasts" class="toasts"></div>
+  <script src="./dashboard.js"></script>
+</body>
+</html>
