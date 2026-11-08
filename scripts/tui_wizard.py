@@ -61,41 +61,18 @@ def text_input(stdscr, prompt: str, default: str = "") -> str:
 
 def run_curses(stdscr) -> dict:
     role_opts = ["coordinator", "worker", "both"]
-    role = role_opts[select(stdscr, "Rol a ejecutar", role_opts, 2)]
+    role_idx = select(stdscr, "Rol a ejecutar", role_opts, 2)
 
     model_opts = ["toy", "hf"]
-    model_kind = model_opts[select(stdscr, "Tipo de modelo", model_opts, 1)]
+    model_idx = select(stdscr, "Tipo de modelo", model_opts, 1)
 
-    model_path = ""
-    if model_kind == "hf":
-        model_path = text_input(stdscr, "Ruta del modelo", "/path/to/model")
-
-    data_path = text_input(stdscr, "Ruta dataset JSONL", "data/zig_sample.jsonl")
-    eval_path = text_input(stdscr, "Ruta holdout JSONL", "data/zig_holdout_sample.jsonl")
-    topic = text_input(stdscr, "Sala Hyperswarm", "diloco-run")
-    token = text_input(stdscr, "Token", "change-me-now")
     device_opts = ["cpu", "cuda"]
-    device = device_opts[select(stdscr, "Device", device_opts, 1)]
-    H = int(text_input(stdscr, "Pasos locales H", "4") or "4")
-    rounds = int(text_input(stdscr, "Rondas", "3") or "3")
-    workers = int(text_input(stdscr, "Workers", "2") or "2")
-    port = int(text_input(stdscr, "Puerto coordinador", "8095") or "8095")
-    run_id = text_input(stdscr, "Nombre de la run", "diloco-run")
+    device_idx = select(stdscr, "Device", device_opts, 1)
 
     return {
-        "role": role,
-        "model_kind": model_kind,
-        "model_path": model_path,
-        "data_path": data_path,
-        "eval_path": eval_path,
-        "topic": topic,
-        "token": token,
-        "device": device,
-        "H": H,
-        "rounds": rounds,
-        "workers": workers,
-        "port": port,
-        "run_id": run_id,
+        "role_idx": role_idx,
+        "model_idx": model_idx,
+        "device_idx": device_idx,
     }
 
 
@@ -170,7 +147,43 @@ def main() -> int:
         print("No hay TTY; usa scripts/wizard.py")
         return 1
 
-    cfg = curses.wrapper(run_curses)
+    sel = curses.wrapper(run_curses)
+    role_opts = ["coordinator", "worker", "both"]
+    model_opts = ["toy", "hf"]
+    device_opts = ["cpu", "cuda"]
+    role = role_opts[sel["role_idx"]]
+    model_kind = model_opts[sel["model_idx"]]
+    device = device_opts[sel["device_idx"]]
+
+    print("\n--- Configuración (texto) ---")
+    model_path = ""
+    if model_kind == "hf":
+        model_path = input("Ruta del modelo [/path/to/model]: ").strip() or "/path/to/model"
+    data_path = input("Ruta dataset JSONL [data/zig_sample.jsonl]: ").strip() or "data/zig_sample.jsonl"
+    eval_path = input("Ruta holdout JSONL [data/zig_holdout_sample.jsonl]: ").strip() or "data/zig_holdout_sample.jsonl"
+    topic = input("Sala Hyperswarm [diloco-run]: ").strip() or "diloco-run"
+    token = input("Token [change-me-now]: ").strip() or "change-me-now"
+    H = int(input("Pasos locales H [4]: ").strip() or "4")
+    rounds = int(input("Rondas [3]: ").strip() or "3")
+    workers = int(input("Workers [2]: ").strip() or "2")
+    port = int(input("Puerto coordinador [8095]: ").strip() or "8095")
+    run_id = input("Nombre de la run [diloco-run]: ").strip() or "diloco-run"
+
+    cfg = {
+        "role": role,
+        "model_kind": model_kind,
+        "model_path": model_path,
+        "data_path": data_path,
+        "eval_path": eval_path,
+        "topic": topic,
+        "token": token,
+        "device": device,
+        "H": H,
+        "rounds": rounds,
+        "workers": workers,
+        "port": port,
+        "run_id": run_id,
+    }
     out = generate_config(cfg)
     print(f"\nConfig guardada en: {out}")
     print(f"Ejecuta: .venv/bin/python scripts/run_coordinator.py --config configs/{cfg['run_id']}.json --p2p-topic {cfg['topic']}")
