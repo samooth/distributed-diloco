@@ -126,11 +126,16 @@ async function tunnelServer() {
     try { if (typeof conn.setNoDelay === 'function') conn.setNoDelay(true) } catch {}
     conn.pipe(target)
     target.pipe(conn)
-    const close = () => { try { conn.destroy() } catch {} ; try { target.destroy() } catch {} }
-    conn.on('close', close)
-    target.on('close', close)
-    conn.on('error', (e) => { console.error('tunnel conn error', e.message); close() })
-    target.on('error', (e) => { console.error('tunnel target error', e.message); close() })
+    let destroyed = false
+    const destroy = (err) => {
+      if (destroyed) return
+      destroyed = true
+      if (err) console.error('tunnel-server error', err.message)
+      try { conn.destroy() } catch {}
+      try { target.destroy() } catch {}
+    }
+    conn.on('error', destroy)
+    target.on('error', destroy)
   })
   await discovery.flushed()
   console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server', topic, target: `${targetHost}:${targetPort}` }))
@@ -164,11 +169,19 @@ async function tunnelClient() {
       try { if (typeof conn.setNoDelay === 'function') conn.setNoDelay(true) } catch {}
       socket.pipe(conn)
       conn.pipe(socket)
-      const close = () => { try { socket.destroy() } catch {} ; try { conn.destroy() } catch {} ; try { swarm.destroy() } catch {} }
-      socket.on('close', close)
-      conn.on('close', close)
-      socket.on('error', (e) => { console.error('tunnel socket error', e.message); close() })
-      conn.on('error', (e) => { console.error('tunnel peer error', e.message); close() })
+      let destroyed = false
+      const destroy = (err) => {
+        if (destroyed) return
+        destroyed = true
+        if (err) console.error('tunnel-client error', err.message)
+        try { socket.destroy() } catch {}
+        try { conn.destroy() } catch {}
+        try { swarm.destroy() } catch {}
+      }
+      socket.on('error', destroy)
+      conn.on('error', destroy)
+      socket.on('close', () => { if (!destroyed) { destroyed = true; try { conn.destroy() } catch {}; try { swarm.destroy() } catch {} } })
+      conn.on('close', () => { if (!destroyed) { destroyed = true; try { socket.destroy() } catch {}; try { swarm.destroy() } catch {} } })
     })
     discovery.flushed().then(() => {
       if (!connected) {
