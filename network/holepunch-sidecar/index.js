@@ -122,16 +122,15 @@ async function tunnelServer() {
   const discovery = swarm.join(topicBuffer(topic), { server: true, client: false })
   swarm.on('connection', (conn, info) => {
     const target = net.connect(targetPort, targetHost)
-    target.setNoDelay(true)
-    conn.setNoDelay(true)
-    const { pipeline } = require('node:stream')
-    pipeline(conn, target, (err) => { if (err) console.error('tunnel c->s error', err.message) })
-    pipeline(target, conn, (err) => { if (err) console.error('tunnel s->c error', err.message) })
+    try { target.setNoDelay(true) } catch {}
+    try { if (typeof conn.setNoDelay === 'function') conn.setNoDelay(true) } catch {}
+    conn.pipe(target)
+    target.pipe(conn)
     const close = () => { try { conn.destroy() } catch {} ; try { target.destroy() } catch {} }
     conn.on('close', close)
     target.on('close', close)
-    conn.on('error', close)
-    target.on('error', close)
+    conn.on('error', (e) => { console.error('tunnel conn error', e.message); close() })
+    target.on('error', (e) => { console.error('tunnel target error', e.message); close() })
   })
   await discovery.flushed()
   console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server', topic, target: `${targetHost}:${targetPort}` }))
@@ -161,16 +160,15 @@ async function tunnelClient() {
       if (connected) return
       connected = true
       clearTimeout(timer)
-      socket.setNoDelay(true)
-      conn.setNoDelay(true)
-      const { pipeline } = require('node:stream')
-      pipeline(socket, conn, (err) => { if (err) console.error('tunnel c->s error', err.message) })
-      pipeline(conn, socket, (err) => { if (err) console.error('tunnel s->c error', err.message) })
+      try { socket.setNoDelay(true) } catch {}
+      try { if (typeof conn.setNoDelay === 'function') conn.setNoDelay(true) } catch {}
+      socket.pipe(conn)
+      conn.pipe(socket)
       const close = () => { try { socket.destroy() } catch {} ; try { conn.destroy() } catch {} ; try { swarm.destroy() } catch {} }
       socket.on('close', close)
       conn.on('close', close)
-      socket.on('error', close)
-      conn.on('error', close)
+      socket.on('error', (e) => { console.error('tunnel socket error', e.message); close() })
+      conn.on('error', (e) => { console.error('tunnel peer error', e.message); close() })
     })
     discovery.flushed().then(() => {
       if (!connected) {
