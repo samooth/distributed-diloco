@@ -113,12 +113,24 @@ $PYTHON scripts/run_coordinator.py --config configs/qwen3-4b-2nodes.json --devic
 $PYTHON scripts/run_worker.py --config configs/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
 ```
 
-## 11. Consola web
+## 11. Agent de procesos (opcional)
+
+Para lanzar coordinador/workers desde la consola web sin terminal:
+
+```bash
+.venv/bin/python scripts/agent.py --host 0.0.0.0 --port 8765
+```
+
+En el dashboard (`web/dashboard.html`), introduce la URL del agent
+(`http://<ip>:8765`) en el campo "agent" y usa los botones
+"Lanzar coordinador" / "Lanzar worker".
+
+## 12. Consola web
 
 Abre `web/index.html` o `web/dashboard.html` en el navegador. No requiere servidor.
 Conecta a la URL del coordinador y el token.
 
-## 12. Dónde leer más
+## 13. Dónde leer más
 
 | Documento | Contenido |
 |---|---|
@@ -130,7 +142,7 @@ Conecta a la URL del coordinador y el token.
 | `docs/03-comunicacion.md` | Protocolo y compresión |
 | `docs/09-referencias.md` | Papers y repos |
 
-## 13. Glosario rápido
+## 14. Glosario rápido
 
 - **Isla:** unidad de sincronización (1 GPU o nodo multi-GPU).
 - **H:** pasos locales antes de sincronizar.
@@ -139,7 +151,7 @@ Conecta a la URL del coordinador y el token.
 - **Churn:** nodos que entran/salen a mitad de ronda.
 - **loss gap:** (DiLoCo − baseline) / baseline (negativo = DiLoCo mejor).
 
-## 14. Problemas comunes
+## 15. Problemas comunes
 
 - **CUDA out of memory:** baja `max_length`, `batch_size`, o usa `quant: "nf4"`.
 - **Modelo no encontrado:** verifica la ruta en el config.
