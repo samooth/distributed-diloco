@@ -138,7 +138,7 @@ def generate_config(cfg: dict) -> Path:
         "data": {
             "path": cfg["data_path"],
             "eval_path": cfg["eval_path"],
-            "num_shards": cfg["workers"],
+            "num_shards": max(cfg["workers"], 4),
             "max_samples": 64 if model_kind == "hf" else 0,
             "eval_samples": 8 if model_kind == "hf" else 64,
             "eval_every": 1,
