@@ -68,7 +68,7 @@ def main() -> int:
 
     model_kind = ask_choice("Tipo de modelo", ["toy", "hf"], "hf")
     if model_kind == "hf":
-        model_path = ask_path("Ruta del modelo (ej. /ai/models/Qwen3-4B-Thinking-2507)")
+        model_path = ask_path("Ruta del modelo (ej. /ruta/a/Qwen3-4B-Thinking-2507)")
     else:
         model_path = ""
 

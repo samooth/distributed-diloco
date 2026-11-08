@@ -1,6 +1,6 @@
 # Estado actual
 
-Repo: `/ai/repos/2026/distributed-diloco`
+Repo: (raíz del repositorio)
 Commit: `f4b5bc3 feat: add real gRPC/mTLS transport`
 Tests: `36 OK` (entorno `.venv`)
 
@@ -73,4 +73,4 @@ Tests: `36 OK` (entorno `.venv`)
 
 - GPU disponible en esta máquina: RTX 3080 8 GB.
 - Usar `hf-venv/bin/python`.
-- Modelos locales en `/ai/models/Qwen2.5-0.5B-Instruct`.
+- Modelos locales: ajusta la ruta en tu config (ver docs/ONBOARDING.md).

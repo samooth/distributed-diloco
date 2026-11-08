@@ -2,7 +2,7 @@
   "run_id": "qwen-0.5b-single",
   "model": {
     "kind": "hf",
-    "name_or_path": "/ai/models/Qwen2.5-0.5B-Instruct",
+    "name_or_path": "/path/to/Qwen2.5-0.5B-Instruct",
     "rank": 8,
     "alpha": 16.0,
     "dtype": "auto",

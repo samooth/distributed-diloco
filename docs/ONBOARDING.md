@@ -49,13 +49,16 @@ Para el resto de esta guía usaremos `PYTHON=.venv/bin/python`.
 
 ## 5. Modelos y datos
 
-Descarga o ubica los modelos en `/ai/models/`. Ejemplo:
-- `/ai/models/Qwen2.5-0.5B-Instruct` (validación rápida)
-- `/ai/models/Qwen3-4B-Thinking-2507` (pruebas serias)
+Descarga o ubica los modelos en tu directorio de modelos. Ejemplo:
+- `/ruta/a/Qwen2.5-0.5B-Instruct` (validación rápida)
+- `/ruta/a/Qwen3-4B-Thinking-2507` (pruebas serias)
 
 Dataset Zig:
-- `/ai/models/moe-zig-lab/data/zig_dense_v5_module_clean.jsonl`
-- `/ai/models/moe-zig-lab/data/zig_holdout.jsonl`
+- `/ruta/a/data/zig_dense_v5_module_clean.jsonl`
+- `/ruta/a/data/zig_holdout.jsonl`
+
+Ajusta las rutas en los configs (`model.name_or_path`, `data.path`, `data.eval_path`)
+a tu instalación.
 
 ## 6. Verificar instalación
 

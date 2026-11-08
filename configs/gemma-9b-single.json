@@ -25,8 +25,8 @@
     "reset_inner_optimizer": true
   },
   "data": {
-    "path": "/ai/models/moe-zig-lab/data/zig_dense_v5_module_clean.jsonl",
-    "eval_path": "/ai/models/moe-zig-lab/data/zig_holdout.jsonl",
+    "path": "/path/to/data/zig_dense_v5_module_clean.jsonl",
+    "eval_path": "/path/to/data/zig_holdout.jsonl",
     "num_shards": 1,
     "max_samples": 8,
     "eval_samples": 2,
