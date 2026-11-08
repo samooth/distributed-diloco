@@ -1,5 +1,7 @@
 # ◆ DiLoCo WAN
 
+> 🌍 Translations: [English](docs/en/README.md) · [Español](README.md) · [Français](docs/fr/README.md) · [中文](docs/zh/README.md) · [日本語](docs/ja/README.md)
+
 > **Entrena adaptadores LoRA de 32B/70B sobre internet, sin datacenter.**
 
 [![Tests](https://img.shields.io/badge/tests-39%20OK-brightgreen)](#)
