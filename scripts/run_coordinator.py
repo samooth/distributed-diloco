@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from diloco.backend import initial_adapter_state  # noqa: E402
-from diloco.checkpoint import CheckpointStore, load_initial_state  # noqa: E402
+from diloco.checkpoint import CheckpointStore, load_initial_state, save_initial_state  # noqa: E402
 from diloco.config import load_config  # noqa: E402
 from diloco.coordinator import Coordinator  # noqa: E402
 from diloco.holepunch import HolepunchSidecar  # noqa: E402
@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="configs/smoke.json")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--checkpoint-dir", default="")
-    parser.add_argument("--init-state", default="", help="adapter bundle from export_initial_state.py")
+    parser.add_argument("--init-state", default="", help="adapter bundle from export_initial_state.py, or 'auto' to use/export runs/init-<config>")
     parser.add_argument("--max-rounds", type=int, default=-1)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--no-wait", action="store_true")
@@ -87,8 +87,20 @@ def main() -> int:
         )
         logging.info("resuming from %s", checkpoint.path)
     else:
-        if args.init_state:
-            init_path = Path(args.init_state)
+        init_state_arg = (args.init_state or "").strip()
+        auto_init = None
+        if init_state_arg in ("auto", "") and cfg.model.kind == "hf":
+            auto_init = (PROJECT_ROOT / "runs" / f"init-{config_path.stem}").resolve()
+            if auto_init.joinpath("meta.json").is_file():
+                init_state_arg = str(auto_init)
+                logging.info("using discovered init state: %s", init_state_arg)
+            elif init_state_arg == "auto":
+                logging.info("exporting initial adapter state to %s", auto_init)
+                state, base_hash, adapter_meta = initial_adapter_state(cfg, device=args.device)
+                save_initial_state(auto_init, state, base_hash, adapter_meta, cfg.fingerprint())
+                init_state_arg = str(auto_init)
+        if init_state_arg and init_state_arg != "auto":
+            init_path = Path(init_state_arg)
             if not init_path.is_absolute():
                 init_path = (PROJECT_ROOT / init_path).resolve()
             state, base_hash, adapter_meta, init_meta = load_initial_state(init_path)
@@ -97,7 +109,8 @@ def main() -> int:
         elif cfg.model.kind == "hf":
             raise SystemExit(
                 "for kind='hf' export the initial adapter first: "
-                "scripts/export_initial_state.py --config ... --out ..."
+                "scripts/export_initial_state.py --config ... --out runs/init-<config>, "
+                "or pass --init-state auto / --init-state runs/init-<config>"
             )
         else:
             state, base_hash, adapter_meta = initial_adapter_state(cfg, device=args.device)

@@ -692,6 +692,7 @@ class Coordinator:
                 "history": list(self.history),
                 "state_hash": self._state_hash,
                 "base_hash": self.base_hash,
+                "config_hash": self.config.fingerprint(),
                 "adapter_meta": self.adapter_meta,
             }
 

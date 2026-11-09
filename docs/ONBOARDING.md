@@ -1,163 +1,115 @@
-# Onboarding: de cero a tu primera ronda DiLoCo
+# Onboarding — DiLoCo WAN
 
-Esta guía está pensada para alguien que **no conoce el proyecto**. Síguela en orden.
+Guía práctica para correr tu primera ronda (local y multi-nodo).
 
-## 1. ¿Qué es esto?
+## 1. Qué es
+DiLoCo sincroniza **solo el adaptador LoRA** cada `H` pasos locales. La base queda congelada (NF4/QLoRA). Un coordinador agrega deltas (outer Nesterov) y publica el nuevo estado global.
 
-DiLoCo WAN entrena adaptadores LoRA de modelos grandes (32B/70B) usando
-varios nodos conectados por internet. En lugar de sincronizar todo el modelo
-cada paso, sincroniza solo el adaptador cada `H` pasos (DiLoCo). Esto reduce
-el tráfico de red ~500× y tolera nodos que aparecen/desaparecen.
+## 2. Requisitos
+- **Python 3.11–3.13** y `.venv` en el repo (o `python3` disponible).
+- **Toy/CPU**: no requiere GPU.
+- **HF/GPU**: PyTorch CUDA, `transformers`, `peft`, `bitsandbytes` (según config).
+- **Túnel P2P (`--p2p-topic`)**: Node.js 18+ y dependencias del sidecar:
+  ```bash
+  cd network/holepunch-sidecar && npm install
+  ```
+- Modelos/datos: ajusta rutas en tu config. **Los configs del repo usan placeholders**; no se versionan rutas personales.
 
-El repo incluye:
-- Coordinador (Python, HTTP/gRPC).
-- Workers (Python, PyTorch + PEFT/QLoRA).
-- Compresión int8, top-k, error feedback.
-- Tolerancia a fallos (churn, late join, evicción).
-- Emulación WAN y transporte P2P (Hyperswarm).
-- Consola web y wizard de terminal.
-
-## 2. Requisitos mínimos
-
-- **Python 3.11–3.13**
-- **GPU NVIDIA** con 8 GB+ VRAM (para 4B). Para 32B/70B: 24–80 GB.
-- **Disco:** 20 GB libres (modelos) + 10 GB (checkpoints).
-- **RAM:** 16 GB mínimo.
-- **Red:** conexión estable; para multi-nodo, Tailscale/Netbird recomendado.
-
-## 3. Clonar el repo
-
+## 3. Preparar entorno
 ```bash
-git clone <URL-del-repo> distributed-diloco
+git clone <repo-url> distributed-diloco
 cd distributed-diloco
+# crea/usa .venv según tu entorno
+.venv/bin/python -m pip install -r requirements.txt  # si aplica en tu setup
 ```
-
-## 4. Entorno Python
-
-El entorno virtual usado en desarrollo está en:
-```
-.venv
-```
-Si no existe, créalo:
+Wrappers convenientes (usan `.venv/bin/python` si existe):
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/pip install torch transformers peft bitsandbytes accelerate safetensors datasets
+./coordinator --help
+./worker --help
+./agent --help
 ```
 
-Para el resto de esta guía usaremos `PYTHON=.venv/bin/python`.
-
-## 5. Modelos y datos
-
-Descarga o ubica los modelos en tu directorio de modelos. Ejemplo:
-- `/ruta/a/Qwen2.5-0.5B-Instruct` (validación rápida)
-- `/ruta/a/Qwen3-4B-Thinking-2507` (pruebas serias)
-
-Dataset Zig:
-- Incluido en el repo: `data/zig_sample.jsonl` (100 ejemplos) y
-  `data/zig_holdout_sample.jsonl` (20 ejemplos).
-- Dataset completo: `/ruta/a/data/zig_dense_v5_module_clean.jsonl` y
-  `/ruta/a/data/zig_holdout.jsonl` (ajusta las rutas en el config).
-
-Ajusta las rutas en los configs (`model.name_or_path`, `data.path`, `data.eval_path`)
-a tu instalación.
-
-## 6. Verificar instalación
-
+## 4. Verificar
 ```bash
-$PYTHON -m unittest discover -s tests -q
-# Esperado: "Ran 39 tests ... OK"
+.venv/bin/python -m unittest discover -s tests -q  # 39 OK esperado
+.venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
 ```
 
-## 7. Primera prueba (toy, sin modelo grande)
+## 5. Configs y rutas
+- No edites configs versionados con rutas personales. Copia a un config local (idealmente no versionado) o edita localmente con cuidado:
+  ```bash
+  cp configs/qwen3-4b-2nodes.json configs/local-qwen3-4b-2nodes.json
+  # edita model.name_or_path y data.path/eval_path
+  ```
+- Requisito HF: `data.num_shards >= coordinator.max_workers`.
+- Token: `coordinator.token` debe coincidir entre coordinador y workers; cámbialo para redes reales (ideal: env/archivo local).
 
+## 6. Estado inicial HF (`init-state`)
+Para backends HF, el coordinador necesita el bundle del adaptador inicial (evita cargar la base solo para shapes).
+- **Auto**: el coordinador busca `runs/init-<config-stem>`. Puedes pasar `--init-state auto` para exportarlo si falta (carga el modelo base).
+- **Manual** (recomendado para modelos grandes):
+  ```bash
+  ./coordinator  # no; usa el script de export:
+  .venv/bin/python scripts/export_initial_state.py \
+    --config configs/local-qwen3-4b-2nodes.json \
+    --out runs/init-qwen3-4b-2nodes --device cuda
+  ```
+- **Worker**: autodetecta `runs/init-<config-stem>`. Si el `state_hash/base_hash/config_hash` coincide con el coordinador, **no descarga** `/v1/state` completo (útil con túnel/WAN).
+
+## 7. Piloto HF 2 nodos (directo)
+Coordinador:
 ```bash
-$PYTHON scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
+./coordinator --config configs/local-qwen3-4b-2nodes.json \
+  --checkpoint-dir runs/qwen3-4b-2nodes --max-rounds 3 --no-wait
 ```
-Deberías ver 4 rondas completadas y `loss` decreciente.
-
-## 8. Primera prueba con modelo real (4B)
-
+Workers (misma máquina o IP alcanzable):
 ```bash
-$PYTHON scripts/smoke_local.py \
-  --config configs/qwen3-4b-single.json --workers 1 --rounds 1 --device cuda
+./worker --config configs/local-qwen3-4b-2nodes.json \
+  --node-id node-0 --shard-id 0 --coordinator http://<IP_COORD>:8095 --device cuda
+./worker --config configs/local-qwen3-4b-2nodes.json \
+  --node-id node-1 --shard-id 1 --coordinator http://<IP_COORD>:8095 --device cuda
 ```
-Esperado: `rounds_done=1`, `done=true`, checkpoint guardado.
 
-## 9. Wizard (recomendado para no teclear)
+## 8. Multi-nodo sin IPs (bitbeam v4, `--p2p-topic`)
+Usa el mismo `--p2p-topic` en todos. El sidecar crea un túnel **bitbeam v4/DHT multiplexado persistente** (una conexión P2P por worker).
 
 ```bash
-$PYTHON scripts/wizard.py
+./coordinator --config configs/local-qwen3-4b-2nodes.json \
+  --checkpoint-dir runs/qwen3-4b-2nodes --max-rounds 3 --no-wait \
+  --p2p-topic diloco-run-4b
+
+./worker --config configs/local-qwen3-4b-2nodes.json \
+  --node-id node-0 --shard-id 0 \
+  --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
 ```
-Te guía para generar un config y los comandos exactos.
+Notas:
+- Tras actualizar `network/holepunch-sidecar/index.js`, reinicia coordinador/workers.
+- Si el DHT tarda o el bootstrap es grande, usa `--init-state` local y/o transporte directo seguro (Tailscale/TLS).
 
-## 10. Multi-nodo con un colega
-
-1. Ambos clonan el repo y comparten el mismo modelo/dataset.
-2. Cambian el `token` en `configs/qwen3-4b-2nodes.json`.
-3. Uno lanza el coordinador:
-   ```bash
-   $PYTHON scripts/run_coordinator.py --config configs/qwen3-4b-2nodes.json --device cuda --reset --max-rounds 3 --no-wait
-   ```
-4. Cada uno lanza su worker:
-   ```bash
-   $PYTHON scripts/run_worker.py --config configs/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --coordinator http://<IP>:8095 --device cuda
-   ```
-5. Monitorean en `web/dashboard.html`.
-
-Para evitar IPs, usen Hyperswarm:
+## 9. Dashboard / agent
 ```bash
-# coordinador
-$PYTHON scripts/run_coordinator.py --config configs/qwen3-4b-2nodes.json --device cuda --reset --max-rounds 3 --no-wait --p2p-topic diloco-run-4b
-# workers
-$PYTHON scripts/run_worker.py --config configs/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
+./agent --open   # sirve web/ y abre http://127.0.0.1:8765/dashboard.html
 ```
+En el dashboard configura URL del coordinador (`http://127.0.0.1:8095` o túnel local), token, y (opcional) URL del agent para lanzar procesos. El agent es para **entornos confiables** (sin auth fuerte por defecto).
 
-## 11. Agent de procesos (opcional)
-
-Para lanzar coordinador/workers desde la consola web sin terminal:
-
+También puedes servir `web/` manualmente:
 ```bash
-.venv/bin/python scripts/agent.py --host 0.0.0.0 --port 8765
+cd web && python3 -m http.server 8000
 ```
 
-En el dashboard (`web/dashboard.html`), introduce la URL del agent
-(`http://<ip>:8765`) en el campo "agent" y usa los botones
-"Lanzar coordinador" / "Lanzar worker".
+## 10. Troubleshooting
+- **`num_shards must be >= coordinator.max_workers`**: ajusta `data.num_shards`.
+- **HF pide exportar init state**: crea/descubre `runs/init-<config-stem>` o pasa `--init-state auto`.
+- **`IncompleteRead`/desconexión bajando estado**: usa `--init-state` local (mismo hash) o transporte directo; el worker reintenta requests seguras.
+- **Túnel no conecta**: verifica `npm install` en `network/holepunch-sidecar`, Node 18+, mismo topic, coordinador reiniciado con sidecar actual; prueba directo para aislar.
+- **`401/403`**: token incorrecto, base/config hash distinto, o worker expulsado/stale (revisa logs; el worker reintenta/recupera en casos soportados).
+- **Rutas de modelo/datos**: usa paths locales en un config no versionado.
 
-## 12. Consola web
+## 11. Seguridad e identidad (estado)
+- Token + validación `config_hash`/`base_hash`/`state_hash`; TLS/mTLS opcional.
+- Transporte: bitbeam v4 cifra el canal (DHT/Noise). Identidad BSV por nodo (claves con `@bsv/sdk`, `BitBeam {from,to}`), allowlist por pubkey y firma/verificación de mensajes están en roadmap.
 
-Abre `web/index.html` o `web/dashboard.html` en el navegador. No requiere servidor.
-Conecta a la URL del coordinador y el token.
-
-## 13. Dónde leer más
-
-| Documento | Contenido |
-|---|---|
-| `README.md` | Visión general, estado, decisiones |
-| `STATUS.md` | Estado actual y resultados |
-| `ROADMAP.md` | Fases y pendientes |
-| `docs/01-algoritmo.md` | DiLoCo, pseudo-gradientes |
-| `docs/02-arquitectura.md` | Componentes y tolerancia a fallos |
-| `docs/03-comunicacion.md` | Protocolo y compresión |
-| `docs/09-referencias.md` | Papers y repos |
-
-## 14. Glosario rápido
-
-- **Isla:** unidad de sincronización (1 GPU o nodo multi-GPU).
-- **H:** pasos locales antes de sincronizar.
-- **Pseudo-gradiente:** `θ_global − θ_local`.
-- **Outer optimizer:** Nesterov sobre pseudo-gradientes agregados.
-- **Churn:** nodos que entran/salen a mitad de ronda.
-- **loss gap:** (DiLoCo − baseline) / baseline (negativo = DiLoCo mejor).
-
-## 15. Problemas comunes
-
-- **CUDA out of memory:** baja `max_length`, `batch_size`, o usa `quant: "nf4"`.
-- **Modelo no encontrado:** verifica la ruta en el config.
-- **Token inválido (401):** el token del worker debe coincidir con el del coordinador.
-- **Nodo evicted:** aumenta `idle_timeout_s` o reduce el tiempo de entrenamiento por ronda.
-
----
-
-¡Bienvenido! Empieza por el paso 7 (smoke toy) para validar tu entorno.
+## 12. Referencias
+- `README.md`, `STATUS.md`, `ROADMAP.md`, `CHANGELOG.md`
+- `docs/03-comunicacion.md` (protocolo/transporte), `docs/07-seguridad.md`
+- `docs/09-referencias.md`

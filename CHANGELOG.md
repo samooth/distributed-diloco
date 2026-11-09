@@ -1,72 +1,43 @@
 # Changelog
 
-Todas las notas detalladas de cambios, resultados y decisiones del proyecto
-se registran aquí. El `README.md` es la presentación; este archivo es el
-histórico técnico.
+Notas detalladas de cambios y decisiones. El `README.md` es la presentación.
 
-## [Unreleased] — estado actual
+## [Unreleased]
+
+### Añadido
+- **Bitbeam v4 como transporte de túnel P2P** (`network/holepunch-sidecar`): `tunnel-server`/`tunnel-client` usan `bitbeam@4` sobre `@hyperswarm/dht` con **multiplexado persistente** de substreams TCP (una conexión P2P por worker, no un lookup por request HTTP). Clave determinista derivada de `--p2p-topic`.
+- **`GET /v1/state_meta`** (coordinador, autenticado): metadatos de ronda/estado sin descargar el blob completo.
+- **Bootstrap local de estado inicial** (worker): `--init-state` carga el bundle local si `state_hash`/`base_hash`/`config_hash` coinciden con el coordinador; evita descargas grandes por túnel en round 0.
+- **Autodetección/export de init state**: `run_worker.py`/`run_coordinator.py` descubren `runs/init-<config-stem>` para HF; `--init-state auto` en coordinador exporta el adaptador si falta.
+- **Wrappers raíz**: `./coordinator`, `./worker`, `./agent` (usan `.venv/bin/python` si existe).
+- **Agent web**: `scripts/agent.py` sirve `web/` en el mismo origen, añade `--open` y pasa `init_state` al lanzar workers.
+- **Reintentos de red** en worker para requests seguras (`GET`, heartbeat/register/leave) ante `IncompleteRead`/desconexiones.
+
+### Cambiado
+- `/v1/status` (y alias `/v1/metrics`) incluye `config_hash`.
+- `configs/qwen3-4b-2nodes.json`: `num_shards=4` (cumple `>= max_workers`) y rutas/modelo como placeholders.
+- Documentación actualizada (README, ONBOARDING, 03-comunicación, STATUS, ROADMAP).
+
+### Notas
+- El túnel bitbeam requiere `cd network/holepunch-sidecar && npm install` en cada máquina. Tras cambios en `index.js`, reiniciar procesos que lanzan el sidecar.
+- `--init-state auto` en coordinador puede cargar el modelo base; para 32B/70B exportar en una máquina adecuada y distribuir el bundle.
+- `scripts/agent.py` es para entornos confiables (sin auth fuerte por defecto).
+
+## [Previo] — base P0–P2
 
 ### Implementado
-- P0/P1: config validada con fingerprint, backend `toy`/`hf` (PEFT/QLoRA),
-  coordinador HTTP/gRPC, checkpoints, reanudación, exportación inicial.
+- P0/P1: config validada con fingerprint, backend `toy`/`hf` (PEFT/QLoRA), coordinador HTTP/gRPC, checkpoints, reanudación, exportación inicial.
 - P2.1: compresión int8 por tensor, top-k, error feedback.
-- P2.2: rejoin, late join, evicción, TLS/mTLS, object store, WAN emulation,
-  transporte P2P Hyperswarm, gRPC/mTLS real, churn completo (≤ 2 rondas).
-- Carga thread-safe del modelo HF.
-- `run_coordinator.py --reset`.
-- Wizard de terminal (`scripts/wizard.py`).
-- Gateway DiLoCo (`network/diloco-gateway/`).
-- Adaptador Python `diloco/gateway_client.py`.
-- Consola web (`web/`) y monitor de red (`web/network.html`).
-- Página de presentación (`web/index.html`).
-- Onboarding (`docs/ONBOARDING.md`).
+- P2.2: rejoin, late join, evicción, TLS/mTLS, object store, WAN emulation, transporte P2P (inicial Hyperswarm), churn completo (≤ 2 rondas).
+- Carga thread-safe del modelo HF. Wizards, gateway DiLoCo, consola web, monitor de red.
 
 ### Resultados
 - F1 toy: DiLoCo `0.003723` vs baseline `0.008095`, `loss_gap=-54%`.
-- F1 real (Qwen2.5-0.5B, 2 workers, 5 rondas):
-  - int8 H=10/20/50/100: `+5.29%`, `+1.23%`, `-0.97%`, `-1.47%`.
-  - int8+top-k 10%: `+7.72%`, `+6.46%`, `+4.45%`, `+3.14%`.
-  - int8+error feedback H=10/20/50: `+7.44%`, `+6.02%`, `+3.62%`.
+- Qwen2.5-0.5B (2 workers, 5 rondas): int8 H=10/20/50/100 → `+5.29%`, `+1.23%`, `-0.97%`, `-1.47%`; int8+top-k 10% → `+7.72%`, `+6.46%`, `+4.45%`, `+3.14%`.
 - Payload Qwen2.5-0.5B: 2.16 MB → 0.54 MB (4×) con int8.
-- 4B (Qwen3-4B-Thinking-2507) smoke OK en RTX 3080 8 GB.
-
-### Tests
-- 39 tests OK.
 
 ### Pendiente
-- Barrido int8+EF a H=100 (3 semillas).
-- Pruebas WAN con `tc netem` y medición CU/sync.
-- Piloto 32B y 70B QLoRA.
-- Full fine-tuning 7B/13B (FSDP2).
-- 8–20 nodos / 100B+ (investigación).
-
-### Decisiones clave
-- Algoritmo: DiLoCo (AdamW interior + Nesterov exterior).
-- Solo adaptador LoRA/DoRA se sincroniza.
-- Base en NF4 congelada.
-- Topología estrella con coordinador para 2–4 islas.
-- Rondas síncronas con deadline y checkpoint por ronda.
-- Stack Python/PyTorch/PEFT/bitsandbytes.
-
-### Riesgos
-- Subida doméstica satura el coordinador → anillo/árbol, int8, H mayor.
-- 70B no cabe en 48 GB con seq_len alto → seq_len 512–1024, batch 1.
-- Nodo lento bloquea la ronda → deadline, expulsión, rejoin.
-- Base distinta entre nodos → hash de base/config, fallar cerrado.
-
-### Comandos útiles
-```bash
-.venv/bin/python -m unittest discover -s tests -q
-.venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
-.venv/bin/python scripts/wizard.py
-```
+- Validación E2E bitbeam en NAT real; identidad BSV por nodo (`@bsv/sdk`); `pilot/up`; barridos WAN con `tc netem`; pilotos 32B/70B.
 
 ### Referencias esenciales
-- DiLoCo: https://arxiv.org/abs/2311.08105
-- OpenDiLoCo: https://arxiv.org/abs/2407.07852
-- INTELLECT-1: https://arxiv.org/abs/2412.01152
-- Streaming DiLoCo: https://arxiv.org/abs/2501.18512
-- SparseLoCo: https://arxiv.org/abs/2508.15706
-- DiLoCoX: https://arxiv.org/abs/2506.21263
-
-Lista completa en `docs/09-referencias.md`.
+- DiLoCo: https://arxiv.org/abs/2311.08105 · OpenDiLoCo: https://arxiv.org/abs/2407.07852 · INTELLECT-1: https://arxiv.org/abs/2412.01152 · Streaming DiLoCo: https://arxiv.org/abs/2501.18512 · SparseLoCo: https://arxiv.org/abs/2508.15706 · DiLoCoX: https://arxiv.org/abs/2506.21263. Lista completa: `docs/09-referencias.md`.

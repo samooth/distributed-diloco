@@ -96,13 +96,20 @@ def main() -> int:
         cfg = replace(cfg, coordinator=replace(cfg.coordinator, tls_verify=args.tls_verify))
     log_path = Path(args.log) if args.log else Path(cfg.coordinator.checkpoint_dir) / "logs" / f"{args.node_id}.jsonl"
     backend = build_backend(cfg, shard_id=args.shard_id, device=args.device)
-    init_state = args.init_state
-    if init_state:
+    init_state = (args.init_state or "").strip()
+    if init_state in ("", "auto") and cfg.model.kind == "hf":
+        candidate = (PROJECT_ROOT / "runs" / f"init-{config_path.stem}").resolve()
+        if candidate.joinpath("meta.json").is_file():
+            init_state = str(candidate)
+            logging.info("using discovered init state: %s", init_state)
+        elif init_state == "":
+            init_state = ""
+    if init_state and init_state != "auto":
         init_path = Path(init_state)
         if not init_path.is_absolute():
             init_path = (PROJECT_ROOT / init_path).resolve()
         init_state = str(init_path)
-    worker = Worker(cfg, args.node_id, coordinator_url, backend, log_path=str(log_path), grpc_target=grpc_target, init_state_path=init_state or None)
+    worker = Worker(cfg, args.node_id, coordinator_url, backend, log_path=str(log_path), grpc_target=grpc_target, init_state_path=(init_state and init_state != "auto") and init_state or None)
     try:
         summary = worker.run()
     finally:

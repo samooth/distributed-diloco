@@ -1,123 +1,56 @@
 # Roadmap de implementación
 
-Leyenda: `[x]` hecho, `[ ]` pendiente.
+Leyenda: `[x]` hecho, `[~]` parcial, `[ ]` pendiente.
 
 ## P0 — Especificación y esqueleto
-
-- [x] Configuración validada con fingerprint de modelo, datos y entrenamiento.
-- [x] Documentación base del diseño DiLoCo WAN.
-- [x] Estructura del repo y convenciones de checkpoints.
+- [x] Configuración validada con fingerprint.
+- [x] Documentación base y estructura del repo.
 
 ## P1 — Backend, coordinador y 2 islas
-
-- [x] Backend `toy` determinista para CPU.
-- [x] Backend `hf` con PEFT/QLoRA.
+- [x] Backend `toy` determinista y `hf` PEFT/QLoRA.
 - [x] Serialización solo de parámetros entrenables.
-- [x] Coordinador HTTP/1.0 con token, quórum, deadline, heartbeat.
-- [x] Agregación Nesterov y checkpoints atómicos.
-- [x] Reanudación desde checkpoint.
+- [x] Coordinador HTTP/gRPC con token, quórum, deadline, heartbeat.
+- [x] Agregación Nesterov, checkpoints atómicos, reanudación.
 - [x] Exportación previa del adaptador inicial.
-- [x] Smoke test de 2 workers en localhost.
-- [x] Validación end-to-end con Qwen2.5-0.5B en CPU.
+- [x] Smoke local y validación HF pequeña.
+- [x] Autodescubrimiento/init-state (`runs/init-<config>`, `--init-state auto` en coordinador, bootstrap local en worker).
 
-## P2.1 — Compresión int8 y sparsificación
+## P2.1 — Compresión y eficiencia de sync
+- [x] int8 por tensor, top-k, error feedback.
+- [x] Barridos iniciales H/int8/top-k.
+- [x] Compresión de transporte vs compresión DiLoCo separadas conceptualmente (delta int8/top-k; transporte confiable por túnel/HTTP).
+- [ ] zstd/codec negociado para bootstrap de estado grande.
+- [ ] Barrido int8+EF con más semillas y `sync_fraction` medido.
 
-- [x] `train.delta_compression: "int8"`.
-- [x] Escala `fp32` por tensor.
-- [x] Decodificación antes de agregar.
-- [x] Config `configs/int8-toy.json`.
-- [x] Test unitario de compresión.
-- [x] Smoke int8 end-to-end.
-- [x] Carga thread-safe del modelo HF.
-- [x] Sparsificación top-k y error feedback implementados.
-- [x] Barrido int8/top-k/error feedback de varias rondas con 2 nodos.
-- [ ] Test de signo del pseudo-gradiente (unitario añadido; falta validación
-  integrada de divergencia con signo invertido).
-## P2.2 — Robustez de red, nodos y transporte
+## P2.2 — Robustez, red y transporte
+- [x] Rejoin/late join, evicción, `/v1/leave`, retención, object store.
+- [x] Emulación WAN.
+- [x] Túnel P2P por `--p2p-topic` (bitbeam v4 + mux persistente) y modos auxiliares sidecar.
+- [x] `/v1/state_meta` y bootstrap local para evitar descarga completa del estado.
+- [x] Reintentos worker para requests seguras.
+- [~] gRPC/mTLS real (existe; integración/UX puede ampliarse).
+- [ ] Validación E2E del túnel bitbeam en NAT/Internet real, reconexión, métricas de latencia/bytes.
+- [ ] Integración completa gateway WebSocket como transporte primario opcional.
+- [ ] Descarga de estado chunked/reanudable o diff por hash/ronda.
 
-- [x] Rejoin con el mismo `node_id`.
-- [x] Late join opcional (`coordinator.allow_late_join`).
-- [x] Reintento automático si una ronda queda obsoleta.
-- [x] Top-k y error feedback.
-- [x] Expulsión automática de workers inactivos.
-- [x] Endpoint `/v1/leave` y salida ordenada básica.
-- [x] Retención de checkpoints.
-- [x] Object store local/S3 para checkpoints.
-- [x] Emulación WAN con `scripts/wan_emulate.py`.
-- [x] Transporte P2P opcional con Hyperswarm.
-- [x] gRPC/mTLS real.
-- [x] Tolerancia a churn (rejoin de nodos conocidos, recuperación 403 y test
-  integrado de caída a mitad de ronda con recuperación en <= 2 rondas).## F0 — Pipeline y equivalencia
+## Seguridad e identidad
+- [x] Token coordinador, TLS/mTLS opcional, validación de base/config/hash.
+- [~] Agent local para launcher (sirve web, sin auth fuerte; solo entornos confiables).
+- [ ] Auth/allowlist/rate limit para agent y hardening de gateway.
+- [ ] Identidad BSV por nodo con `@bsv/sdk` + bitbeam `{from,to}`, allowlist por pubkey.
+- [ ] Firma/verificación de registros, deltas y manifiestos de checkpoint.
 
-- [x] Ronda completa end-to-end.
-- [x] Checkpoint/reload.
-- [x] Equivalencia de un paso local vs baseline.
-- [ ] Test de signo.
-- [ ] int8 roundtrip con pérdida no explosiva a más pasos.
+## UX / DX
+- [x] Wrappers raíz: `./coordinator`, `./worker`, `./agent`.
+- [x] Agent sirve `web/` y `--open`.
+- [x] Wizards (clásico/TUI) y consola web.
+- [ ] `pilot/up` 1-comando (preflight, export, launch, join card, dashboard prellenado).
+- [ ] Logs en vivo, perfiles locales gitignored, i18n completa de UI.
+- [ ] `make setup`/script de instalación (Python + Node sidecar).
 
-## F1 — Dos islas y WAN emulada
-
-- [x] Config `configs/f1-qwen-0.5b.json`.
-- [x] Config `configs/f1-qwen-0.5b-int8.json`.
-- [x] Baseline centralizado con mismo presupuesto.
-- [x] F1 toy: `loss_gap=-54%`.
-- [x] F1 real float, H=10, 2 workers: `loss_gap=+5.26%`.
-- [x] F1 int8 de varias rondas con 2 workers.
-- [x] Barrido `H ∈ {20, 50, 100}`.
-- [ ] 3 semillas para configuraciones clave.
-- [ ] Pruebas con `tc netem`: latencia, pérdida y ancho de banda.
-- [ ] Sync fraction <= 20%.
-- [ ] int8 no empeora más de 1% la pérdida.
-
-## F2 — Cuatro islas, 7B/8B, red real
-
-- [ ] 4 islas con 7B/8B QLoRA.
-- [ ] int8 estable.
-- [ ] Inyección de nodo lento.
-- [ ] Caída de nodo a mitad de ronda.
-- [ ] Pérdida de red 30 s.
-- [ ] Disco lleno simulado.
-- [ ] Loss gap <= 5%.
-- [ ] CU >= 70%, sync <= 20%.
-- [ ] Recuperación <= 2 rondas.
-
-## F3 — Piloto 32B QLoRA
-
-- [ ] Qwen2.5-32B-Instruct en NF4.
-- [ ] Islas de 24/48 GB.
-- [ ] Throughput, VRAM y OOM medidos.
-- [ ] Loss gap vs 32B single-node <= 3%.
-- [ ] Compile rate Zig vs baseline.
-
-## F4 — Piloto 70B QLoRA
-
-- [ ] Llama-3.1-70B-Instruct en NF4.
-- [ ] Islas de 48/80 GB.
-- [ ] Coste por 1B tokens.
-- [ ] Loss gap vs 70B single-node <= 3%.
-- [ ] Comparación de calidad frente a 32B.
-
-## F5 — Full fine-tuning 7B/13B
-
-- [ ] FSDP2 dentro de la isla.
-- [ ] DiLoCo entre islas.
-- [ ] Checkpoint shardeado y reanudación.
-- [ ] Loss gap <= 5%.
-
-## F6 — Escala e investigación
-
-- [ ] 8-20 nodos.
-- [ ] 32B/70B full o 100B+.
-- [ ] Solo con caso y presupuesto definidos.
-
-## Ablaciones pendientes
-
-- [ ] `H`: 20, 50, 100, 200, 500.
-- [ ] `M`: 2, 4, 8.
-- [ ] `η`: 0.2, 0.4, 0.7, 1.0.
-- [ ] `γ`: 5e-5, 1e-4, 2e-4.
-- [ ] Compresión: bf16, int8, 4-bit.
-- [ ] Adaptador: q/v, atención, todas las lineales.
-- [ ] Rango: 8, 16, 32.
-- [ ] Datos: IID, estratificado, no-IID.
-- [ ] Topología: estrella, anillo.
+## F1–F6 (experimentos y escala)
+- [x] F1 toy y barridos HF pequeños iniciales.
+- [ ] 3 semillas/config clave, `tc netem`, `sync_fraction <= 20%`.
+- [ ] F2 4 islas 7B/8B con churn/red real.
+- [ ] F3 32B QLoRA, F4 70B QLoRA.
+- [ ] F5 full fine-tuning 7B/13B (FSDP2), F6 escala/investigación.

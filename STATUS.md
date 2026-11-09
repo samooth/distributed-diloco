@@ -1,76 +1,49 @@
 # Estado actual
 
-Repo: (raíz del repositorio)
-Commit: `f4b5bc3 feat: add real gRPC/mTLS transport`
-Tests: `36 OK` (entorno `.venv`)
+Snapshot operativo del repo. Histórico detallado: `CHANGELOG.md`.
+
+## Resumen
+- **Tests**: `39 OK` (`.venv/bin/python -m unittest discover -s tests -q`).
+- **Backends**: `toy` (CPU determinista) + `hf` (PEFT/QLoRA, thread-safe).
+- **Coordinación**: HTTP y gRPC opcional, token, quorum, deadline, heartbeat, late join, churn/rejoin, checkpoints atómicos.
+- **Transporte P2P**: sidecar Node con túnel **bitbeam v4** (DHT) + multiplexado persistente para `--p2p-topic`; legado Hyperswarm en modos auxiliares (`announce/share` según sidecar).
+- **Bootstrap HF**: `--init-state` con autodetección `runs/init-<config-stem>`, `--init-state auto` en coordinador (exporta si falta), worker usa init local si `state_hash/base_hash/config_hash` coinciden (evita bajar `/v1/state` grande).
+- **UX**: wrappers `./coordinator`, `./worker`, `./agent`; agent sirve `web/` y `--open`; wizard/TUI; consola web y monitor.
 
 ## Implementado
+- P0/P1: config/fingerprint, backends, coordinador, compresión (int8, top-k, error feedback), checkpoints/reanudación.
+- P2: rejoin/churn (≤ 2 rondas en test), evicción, TLS/mTLS opcional, object store local/S3, emulación WAN, late join.
+- HF: carga thread-safe, exportación de estado inicial, validación de base/config/hash.
+- API: `/v1/health`, `/v1/status` (alias `/v1/metrics`, incluye `config_hash`), `/v1/state_meta`, `/v1/state`, `/v1/register`, `/v1/heartbeat`, `/v1/delta`, `/v1/leave`.
+- Sidecar `network/holepunch-sidecar`: `tunnel-server`/`tunnel-client` sobre bitbeam v4 con mux de substreams TCP; requiere `npm install`.
+- Worker: reintentos en requests seguras ante `IncompleteRead`/desconexiones.
 
-- P0/P1: config, backend toy/HF, coordinador HTTP, espera de `min_workers`,
-  checkpoints, reanudación.
-- Baseline centralizado (`scripts/train_centralized.py`).
-- P2.1: compresión int8 por tensor (`train.delta_compression: "int8"`).
-- P2.2: top-k, error feedback, late join, salida ordenada, expulsión básica,
-  retención de checkpoints, TLS opcional y object store local/S3.
-- Transporte P2P opcional con `--p2p-topic` (túnel Hyperswarm).
-- Sidecar Holepunch para discovery, ledger, Hyperdrive y HyperDB.
-- Emulación WAN con `scripts/wan_emulate.py`.
-- Carga thread-safe del modelo HF para evitar meta-tensors con 2 workers.
-- `run_coordinator.py --reset`.
-- gRPC/mTLS real (transporte alternativo al HTTP/1.0).
-- Página web de presentación en `web/index.html`.
-- Gateway DiLoCo (Hyperswarm/WebSocket) integrado en
-  `network/diloco-gateway/`.
-- Adaptador Python `diloco/gateway_client.py` (`DiLoCoGatewayClient`) para
-  relay de deltas/checkpoints vía WebSocket.
+## Resultados (referencia)
+- F1 toy: DiLoCo `0.003723` vs baseline `0.008095` (`loss_gap=-54%`).
+- Qwen2.5-0.5B (2 workers, 5 rondas): int8 H=10/20/50/100 → `+5.29%`, `+1.23%`, `-0.97%`, `-1.47%`; int8+top-k 10% → `+7.72%`, `+6.46%`, `+4.45%`, `+3.14%`.
+- Smoke HF 4B (QLoRA NF4) validado en hardware local (ajustar rutas/modelos por máquina).
 
-## Resultados
+## Pendiente / siguiente
+- Validación E2E del túnel bitbeam en NAT real/multi-máquina y reconexión automática del beam.
+- Identidad BSV por nodo (`@bsv/sdk` + bitbeam `{from,to}`), allowlist y firma/verificación de mensajes.
+- `pilot/up` de 1 comando (prepare + launch + join card + dashboard prellenado).
+- Barridos WAN/`tc netem`, métricas Prometheus, pilotos 32B/70B.
+- Endurecer `scripts/agent.py` (auth/allowlist) antes de exponer fuera de entornos confiables.
 
-- F1 toy: DiLoCo `0.003723` vs baseline `0.008095`, `loss_gap=-54%`.
-- F1 real float (H=10, 2 workers, Qwen2.5-0.5B):
-  - inicial: `2.500206`
-  - DiLoCo: `2.417826`
-  - baseline: `2.297088`
-  - `loss_gap=+5.26%`
-- F1 real int8 (2 workers, Qwen2.5-0.5B, 5 rondas):
-  - H=10: `2.418675`, `loss_gap=+5.29%`, upload `567341-567342 B`
-  - H=20: `2.325399`, `loss_gap=+1.23%`
-  - H=50: `2.274715`, `loss_gap=-0.97%`
-  - H=100: `2.263300`, `loss_gap=-1.47%`
-  - delta por ronda: `2162688 B` (3.8x)
-- F1 real int8+top-k 10% (2 workers, 5 rondas, error feedback):
-  - H=10: `2.474486`, `loss_gap=+7.72%`, upload `544057-544059 B`
-  - H=20: `2.445505`, `loss_gap=+6.46%`
-  - H=50: `2.399221`, `loss_gap=+4.45%`
-  - H=100: `2.369196`, `loss_gap=+3.14%`
-- F1 real int8 con error feedback (2 workers, 5 rondas):
-  - H=10: `2.467926`, `loss_gap=+7.44%`
-  - H=20: `2.435299`, `loss_gap=+6.02%`
-  - H=50: `2.380166`, `loss_gap=+3.62%`
-- int8 toy: `0.003339` vs `0.003723`, sin degradación apreciable.
-- int8 HF de 1 paso: payload `2.16 MB -> 0.54 MB` (4x), mensaje HTTP `0.567 MB` (3.8x).
-
-## Pendiente
-
-- Barrido int8 con error feedback a `H=100`.
-- Pruebas WAN con `tc netem` y medición de CU/sync.
-- Churn: rejoin de nodos conocidos, recuperación 403 y test integrado de caída a
-  mitad de ronda con recuperación en <= 2 rondas.
-- Test de signo del pseudo-gradiente (unitario añadido; falta validación
-  integrada de divergencia con signo invertido).
-- Pilotos 32B/70B en nodos con GPU suficiente.
-- Revisión de OpenDiLoCo: útil como referencia, no base (ver docs/09).
 ## Comandos útiles
-
 ```bash
 .venv/bin/python -m unittest discover -s tests -q
-.venv/bin/python scripts/smoke_local.py --config configs/smoke.json --reset --rounds 4 --workers 2 --device cpu
-.venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4 --p2p-topic diloco-exp --no-wait
-.venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --p2p-topic diloco-exp --shard-id 0 --device cuda --tunnel-listen-port 18183
+./coordinator --config configs/smoke.json --device cpu --reset --max-rounds 4 --no-wait
+./worker --config configs/smoke.json --node-id node-0 --coordinator http://127.0.0.1:8095 --device cpu
+
+# HF (rutas/modelos en config local; init-state auto-descubierto en runs/init-<config>)
+./coordinator --config configs/qwen3-4b-2nodes.json --checkpoint-dir runs/qwen3-4b-2nodes --max-rounds 3 --no-wait --p2p-topic diloco-run-4b
+./worker --config configs/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
+
+./agent --open
 ```
 
-## Entorno
-
-- GPU disponible en esta máquina: RTX 3080 8 GB.
-- Usar `hf-venv/bin/python`.
-- Modelos locales: ajusta la ruta en tu config (ver docs/ONBOARDING.md).
+## Entorno / notas
+- Usa `.venv` del repo. Los configs del repo usan **placeholders** (sin rutas personales); ajusta paths localmente o usa un config local no versionado.
+- Túnel P2P: Node.js + `cd network/holepunch-sidecar && npm install` (y deps nativas de bitbeam/dht si el entorno lo requiere).
+- `--init-state auto` en coordinador puede cargar el modelo base para exportar; en 32B/70B prefiere exportar en una máquina con el modelo y copiar el bundle.

@@ -1,37 +1,27 @@
 # ◆ DiLoCo WAN
 
-> **Entraînez des adaptateurs LoRA 32B/70B sur Internet, sans datacenter.**
+> **Entraînez des adaptateurs LoRA pour grands modèles sur Internet, sans datacenter.**
 
-DiLoCo WAN adapte de grands modèles avec **DiLoCo** (*Distributed Low-Communication*) :
-il synchronise uniquement l'adaptateur tous les `H` pas locaux, avec un optimiseur
-extérieur Nesterov. La base reste gelée en NF4 (QLoRA), chaque île tient sur un
-GPU domestique (8–80 Go) et le trafic par round passe de **140 Go à 0.07–0.8 Go**.
+DiLoCo WAN utilise **DiLoCo** (*Distributed Low-Communication*) : synchronisation uniquement de l'adaptateur LoRA tous les `H` pas locaux avec un optimiseur externe Nesterov. La base reste gelée (NF4/QLoRA).
 
 ## Fonctionnalités
-
-- **Backends** : `toy` (CPU déterministe) + `hf` (PEFT/QLoRA), chargement thread-safe.
-- **Coordinateur** : HTTP/gRPC, token, quorum, deadline, heartbeat, late join.
+- **Backends** : `toy` (CPU déterministe) + `hf` (PEFT/QLoRA).
+- **Coordinateur** : HTTP/gRPC, token, quorum, deadline, heartbeat, late join, `/v1/state_meta`.
 - **Compression** : int8 (4×), top-k + error feedback.
-- **Churn** : rejoin, éviction, récupération ≤ 2 rounds (test intégré).
-- **Sécurité** : TLS/mTLS, allowlist, validation des deltas.
-- **Stockage** : checkpoints atomiques, rétention, object store local/S3.
-- **WAN** : émulation (latence, jitter, perte, bande passante), tunnel Hyperswarm.
-- **Web** : page de présentation + console opérationnelle + moniteur réseau (responsive).
-- **CLI** : wizard classique et TUI (curses).
-- **Agent** : lancement de processus depuis l'interface web.
+- **Churn** : rejoin, éviction, récupération ≤ 2 rounds (testé).
+- **P2P/WAN** : tunnel **bitbeam v4** (DHT) multiplexé persistant (`--p2p-topic`), émulation WAN.
+- **Bootstrap HF** : découverte auto `runs/init-<config-stem>`, `--init-state auto`, bootstrap local si les hashs correspondent.
+- **UX** : wrappers `./coordinator` `./worker` `./agent`, wizards, console/moniteur web.
 
 ## Démarrage rapide
-
 ```bash
 .venv/bin/python -m unittest discover -s tests -q
-.venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
-.venv/bin/python scripts/wizard.py
+./coordinator --config configs/smoke.json --device cpu --reset --max-rounds 4 --no-wait
+./worker --config configs/smoke.json --node-id node-0 --coordinator http://127.0.0.1:8095 --device cpu
+./agent --open
 ```
+Tunnel P2P : `cd network/holepunch-sidecar && npm install`, puis `--p2p-topic <topic>`. Les configs du dépôt utilisent des chemins génériques.
 
 ## Documentation
-
-- [Onboarding](../ONBOARDING.md)
-- [Algorithme](../01-algoritmo.md) · [Architecture](../02-arquitectura.md) · [Communication](../03-comunicacion.md)
-- [Modèles](../04-modelos.md) · [Entraînement](../05-entrenamiento.md) · [Opérations](../06-operaciones.md)
-- [Sécurité](../07-seguridad.md) · [Expériences](../08-experimentos.md) · [Références](../09-referencias.md)
+- [Onboarding](../ONBOARDING.md) · [Communication](../03-comunicacion.md) · [Sécurité](../07-seguridad.md)
 - [Changelog](../../CHANGELOG.md) · [Statut](../../STATUS.md) · [Roadmap](../../ROADMAP.md)

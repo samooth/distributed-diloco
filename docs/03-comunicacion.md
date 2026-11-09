@@ -84,7 +84,7 @@ Reglas:
 | bf16/fp16 | 2 | 1× | OpenDiLoCo: fp16 sin degradación | Baja | v1 |
 | int8 simétrico | 1 | 2× | INTELLECT-1: int8 sin impacto apreciable | Baja | P2.1 (hecho) |
 | top-k + error feedback | 1 | 2-10× | SparseLoCo: sparsificación con feedback | Media | P2.2 (hecho) |
-| túnel P2P | 1 | 1× | Hyperswarm: discovery y transporte sin exponer puertos | Media | P2.2 (hecho) |
+| túnel P2P | 1 | 1× | bitbeam v4/DHT + mux persistente (sin exponer puertos) | Media | hecho (validar NAT E2E) |
 | 4 bits | 0.5 | 4× | Streaming DiLoCo | Media | v2 |
 | Top-k 1-3% + 2 bits | ~0.0025-0.0075 + índices | 50-100× | SparseLoCo | Alta | Full fine-tuning |
 | DCT + top-k (DeMo) | variable | 44-85× | DeMo | Media | Paso a paso, no DiLoCo |
@@ -338,47 +338,72 @@ Pasos:
 - Serializar con `pickle` “porque es más rápido”.
 - Medir el tiempo de sync sin incluir la agregación en el coordinador.
 
-## 11. Transporte Hyperswarm (sin IPs)
+## 11. Transporte P2P sin IPs (`--p2p-topic`, bitbeam v4)
 
-Hyperswarm permite que coordinador y workers se encuentren por un **topic**
-(cadena de texto) en lugar de IPs. El topic se hashea a SHA-256 y se usa en
-la DHT de Hyperswarm para descubrimiento y NAT traversal.
+El transporte P2P permite que coordinador y workers se encuentren por un
+**topic** (cadena compartida) en lugar de IPs. El topic se deriva a una clave
+determinista compatible con bitbeam (base32 de SHA-256 del topic) para el
+descubrimiento/conexión DHT.
 
-### Cómo se usa en este repo
+### Cómo se usa
 
-- `run_coordinator.py --p2p-topic <topic>`: levanta un túnel servidor que
-  reenvía el tráfico al puerto del coordinador.
-- `run_worker.py --p2p-topic <topic> --tunnel-listen-port 18080`: levanta un
-  túnel cliente que abre un puerto local (`127.0.0.1:18080`) y reenvía al
-  coordinador a través del swarm.
-- El worker se conecta a `http://127.0.0.1:18080` sin conocer la IP del
+- `./coordinator ... --p2p-topic <topic>`: levanta sidecar `tunnel-server` y
+  reenvía tráfico al puerto HTTP/gRPC local del coordinador.
+- `./worker ... --p2p-topic <topic> --tunnel-listen-port 18080`: levanta
+  sidecar `tunnel-client`, abre `127.0.0.1:18080` y conecta al coordinador por
+  el túnel.
+- El worker habla HTTP/gRPC contra el puerto local; no necesita IP pública del
   coordinador.
 
-### Implementación
+### Implementación actual
 
-- `network/holepunch-sidecar/index.js`: modos `tunnel-server`, `tunnel-client`,
-  `announce`. Usa Hyperswarm para discovery y reenvío TCP.
-- `diloco/holepunch.py`: wrapper `HolepunchSidecar` que lanza el proceso Node
-  y espera el evento `ready`.
-- El tráfico HTTP/gRPC va cifrado por Hyperswarm (Noise protocol) sobre el
-  túnel; la autenticación de aplicación sigue siendo el token del coordinador.
+- `network/holepunch-sidecar/index.js` (Node, CommonJS):
+  - `tunnel-server`/`tunnel-client` usan **`bitbeam@4`** (`@hyperswarm/dht`)
+    como transporte cifrado.
+  - **Multiplexado persistente**: una conexión P2P por worker transporta
+    múltiples substreams TCP (frames `[streamId, flags, len, payload]`), evitando
+    un lookup DHT por request HTTP (causa común de latencia/truncados).
+  - Requiere `npm install` en `network/holepunch-sidecar`.
+- `diloco/holepunch.py`: lanza el sidecar y espera `ready`.
+- `scripts/run_coordinator.py` / `scripts/run_worker.py`: integran
+  `--p2p-topic`, `--tunnel-listen-host/port`, `--announce-topic`.
+
+### Fiabilidad y bootstrap
+
+- `GET /v1/state` puede ser grande (adaptador inicial). Para evitar truncados
+  sobre redes inestables:
+  - worker usa **bootstrap local** con `--init-state` si
+    `state_hash/base_hash/config_hash` coincide (consulta `GET /v1/state_meta`,
+    pequeño);
+  - worker reintenta requests seguras ante `IncompleteRead`/desconexiones.
+- Para pilotos iniciales, el camino más determinista es transporte directo
+  (LAN/Tailscale/TLS) o init-state local equivalente en cada nodo.
+
+### Seguridad e identidad
+
+- Cifrado de transporte: provisto por bitbeam/DHT (Noise). **No sustituye** la
+  autenticación de aplicación (`X-DiLoCo-Token`, TLS/mTLS opcional).
+- Identidad por nodo (roadmap): usar claves BSV vía `@bsv/sdk` y
+  `BitBeam({from,to,context})` para canales por par, más allowlist y
+  firma/verificación de registros/deltas/manifiestos en el protocolo DiLoCo.
 
 ### Limitaciones
 
-- NAT simétrico puede requerir relay automático de Hyperswarm.
-- El túnel añade un salto; aceptable para DiLoCo (sync cada `H` pasos).
-- El navegador no puede unirse a Hyperswarm directamente; la consola web se
-  conecta al túnel local o al coordinador por IP.
+- Depende de DHT/NAT; algunos entornos pueden requerir más tiempo o fallar.
+- Validación E2E multi-máquina/NAT real del nuevo túnel bitbeam+MUX: pendiente.
+- Navegador: no se conecta directo al DHT; usar dashboard contra coordinador
+  directo o túnel local HTTP.
 
 ### Ejemplo
 
 ```bash
-# Coordinador (máquina A)
-.venv/bin/python scripts/run_coordinator.py --config configs/qwen3-4b-2nodes.json \
-  --device cuda --reset --max-rounds 3 --no-wait --p2p-topic diloco-run-4b
+# Coordinador (reiniciar si cambió sidecar/index.js)
+./coordinator --config configs/local-qwen3-4b-2nodes.json \
+  --checkpoint-dir runs/qwen3-4b-2nodes --max-rounds 3 --no-wait \
+  --p2p-topic diloco-run-4b
 
-# Worker (máquina B)
-.venv/bin/python scripts/run_worker.py --config configs/qwen3-4b-2nodes.json \
-  --node-id node-1 --shard-id 1 --p2p-topic diloco-run-4b \
-  --tunnel-listen-port 18080 --device cuda
+# Worker
+./worker --config configs/local-qwen3-4b-2nodes.json \
+  --node-id node-1 --shard-id 1 \
+  --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
 ```

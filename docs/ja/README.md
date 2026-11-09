@@ -1,37 +1,27 @@
 # ◆ DiLoCo WAN
 
-> **データセンターなしで、インターネット上で 32B/70B LoRA アダプタを学習。**
+> **データセンターなしで、インターネット越しに大規模モデルの LoRA アダプタを学習。**
 
-DiLoCo WAN は **DiLoCo** (*Distributed Low-Communication*) で大規模モデルを適応します。
-`H` ローカルステップごとにアダプタのみを同期し、外部は Nesterov オプティマイザ。
-ベースは NF4 (QLoRA) で凍結されるため、各島は民生 GPU (8–80 GB) に収まり、
-1 ラウンドのトラフィックは **140 GB から 0.07–0.8 GB** に減少します。
+DiLoCo WAN は **DiLoCo** (*Distributed Low-Communication*) を用い、`H` ローカルステップごとに LoRA アダプタのみを同期し、外部 Nesterov オプティマイザで集約します。ベースモデルは凍結（NF4/QLoRA）です。
 
 ## 特徴
-
-- **バックエンド**: `toy`（決定的 CPU）+ `hf`（PEFT/QLoRA）、スレッドセーフ読み込み。
-- **コーディネータ**: HTTP/gRPC、token、quorum、deadline、heartbeat、late join。
+- **バックエンド**: `toy`（決定的 CPU）+ `hf`（PEFT/QLoRA）。
+- **コーディネータ**: HTTP/gRPC、token、quorum、deadline、heartbeat、late join、`/v1/state_meta`。
 - **圧縮**: int8（4×）、top-k + error feedback。
-- **Churn**: rejoin、eviction、≤2 ラウンドで回復（統合テスト済み）。
-- **セキュリティ**: TLS/mTLS、allowlist、delta 検証。
-- **ストレージ**: アトミック checkpoint、保持、ローカル/S3 object store。
-- **WAN**: エミュレーション（遅延、ジッタ、損失、帯域）、Hyperswarm トンネル。
-- **Web**: ランディング + 運用コンソール + ネットワークモニタ（レスポンシブ）。
-- **CLI**: クラシック wizard と TUI (curses)。
-- **Agent**: Web UI からプロセス起動。
+- **Churn**: rejoin、eviction、≤2 ラウンドで回復（テスト済み）。
+- **P2P/WAN**: **bitbeam v4**（DHT）永続マルチプレックストンネル（`--p2p-topic`）、WAN エミュレーション。
+- **HF ブートストラップ**: `runs/init-<config-stem>` 自動検出、`--init-state auto`、ハッシュ一致時のローカル bootstrap。
+- **UX**: ルートラッパー `./coordinator` `./worker` `./agent`、wizard、Web コンソール/モニタ。
 
 ## クイックスタート
-
 ```bash
 .venv/bin/python -m unittest discover -s tests -q
-.venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
-.venv/bin/python scripts/wizard.py
+./coordinator --config configs/smoke.json --device cpu --reset --max-rounds 4 --no-wait
+./worker --config configs/smoke.json --node-id node-0 --coordinator http://127.0.0.1:8095 --device cpu
+./agent --open  # web/ を配信して dashboard を開く
 ```
+P2P トンネル: `cd network/holepunch-sidecar && npm install` の後、coordinator/worker に `--p2p-topic <topic>` を指定。リポジトリの config はパスのプレースホルダを使用します。
 
 ## ドキュメント
-
-- [Onboarding](../ONBOARDING.md) — ゼロから最初のラウンドへ。
-- [アルゴリズム](../01-algoritmo.md) · [アーキテクチャ](../02-arquitectura.md) · [通信](../03-comunicacion.md)
-- [モデル](../04-modelos.md) · [学習](../05-entrenamiento.md) · [運用](../06-operaciones.md)
-- [セキュリティ](../07-seguridad.md) · [実験](../08-experimentos.md) · [参考](../09-referencias.md)
+- [Onboarding](../ONBOARDING.md) · [通信](../03-comunicacion.md) · [セキュリティ](../07-seguridad.md)
 - [Changelog](../../CHANGELOG.md) · [状態](../../STATUS.md) · [Roadmap](../../ROADMAP.md)
