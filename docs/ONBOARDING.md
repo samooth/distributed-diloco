@@ -1,115 +1,97 @@
 # Onboarding — DiLoCo WAN
 
-Guía práctica para correr tu primera ronda (local y multi-nodo).
+Guía práctica para poner en marcha un entrenamiento distribuido con **DiLoCo WAN**. El objetivo es automatizar lo máximo posible (wrappers, autodetección, bootstrap local) y moverse hacia un modelo de identidad **BSV + bitbeam** en lugar de Nostr.
 
-## 1. Qué es
-DiLoCo sincroniza **solo el adaptador LoRA** cada `H` pasos locales. La base queda congelada (NF4/QLoRA). Un coordinador agrega deltas (outer Nesterov) y publica el nuevo estado global.
+## 1. Conceptos
+- **Isla**: nodo/worker con base congelada (NF4/QLoRA) y adaptador LoRA local.
+- **Coordinador**: agrega deltas cada `H` pasos, aplica Nesterov outer, publica estado global y checkpoints.
+- **Túnel P2P**: `--p2p-topic` usa **bitbeam v4/DHT** multiplexado (una conexión por worker). Cifrado por canal; la autorización de aplicación sigue siendo necesaria.
+- **Identidad (objetivo)**: claves **BSV** por nodo (`@bsv/sdk`), canales bitbeam por par con derivación ECDH (`{from,to}`), allowlist del coordinador y firma/verificación de mensajes (registro/deltas/manifiestos).
 
-## 2. Requisitos
-- **Python 3.11–3.13** y `.venv` en el repo (o `python3` disponible).
-- **Toy/CPU**: no requiere GPU.
-- **HF/GPU**: PyTorch CUDA, `transformers`, `peft`, `bitsandbytes` (según config).
-- **Túnel P2P (`--p2p-topic`)**: Node.js 18+ y dependencias del sidecar:
-  ```bash
-  cd network/holepunch-sidecar && npm install
-  ```
-- Modelos/datos: ajusta rutas en tu config. **Los configs del repo usan placeholders**; no se versionan rutas personales.
-
-## 3. Preparar entorno
+## 2. Instalación rápida
 ```bash
 git clone <repo-url> distributed-diloco
 cd distributed-diloco
-# crea/usa .venv según tu entorno
-.venv/bin/python -m pip install -r requirements.txt  # si aplica en tu setup
+# Entorno Python
+.venv/bin/python -m pip install -r requirements.txt  # según tu setup
+# Sidecar Node (para túnel P2P)
+cd network/holepunch-sidecar && npm install && cd ../..
 ```
-Wrappers convenientes (usan `.venv/bin/python` si existe):
+Wrappers (usan `.venv/bin/python` si existe):
 ```bash
 ./coordinator --help
 ./worker --help
 ./agent --help
 ```
 
-## 4. Verificar
+## 3. Verificación
 ```bash
-.venv/bin/python -m unittest discover -s tests -q  # 39 OK esperado
+.venv/bin/python -m unittest discover -s tests -q  # 39 OK
 .venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
 ```
 
-## 5. Configs y rutas
-- No edites configs versionados con rutas personales. Copia a un config local (idealmente no versionado) o edita localmente con cuidado:
-  ```bash
-  cp configs/qwen3-4b-2nodes.json configs/local-qwen3-4b-2nodes.json
-  # edita model.name_or_path y data.path/eval_path
-  ```
-- Requisito HF: `data.num_shards >= coordinator.max_workers`.
-- Token: `coordinator.token` debe coincidir entre coordinador y workers; cámbialo para redes reales (ideal: env/archivo local).
-
-## 6. Estado inicial HF (`init-state`)
-Para backends HF, el coordinador necesita el bundle del adaptador inicial (evita cargar la base solo para shapes).
-- **Auto**: el coordinador busca `runs/init-<config-stem>`. Puedes pasar `--init-state auto` para exportarlo si falta (carga el modelo base).
-- **Manual** (recomendado para modelos grandes):
-  ```bash
-  ./coordinator  # no; usa el script de export:
-  .venv/bin/python scripts/export_initial_state.py \
-    --config configs/local-qwen3-4b-2nodes.json \
-    --out runs/init-qwen3-4b-2nodes --device cuda
-  ```
-- **Worker**: autodetecta `runs/init-<config-stem>`. Si el `state_hash/base_hash/config_hash` coincide con el coordinador, **no descarga** `/v1/state` completo (útil con túnel/WAN).
-
-## 7. Piloto HF 2 nodos (directo)
-Coordinador:
+## 4. Configuración (sin rutas personales)
+Los configs del repo usan **placeholders**. Copia a un config local **no versionado**:
 ```bash
-./coordinator --config configs/local-qwen3-4b-2nodes.json \
-  --checkpoint-dir runs/qwen3-4b-2nodes --max-rounds 3 --no-wait
+cp configs/qwen3-4b-2nodes.json configs/local/qwen3-4b-2nodes.json  # o configs/local-*.json
 ```
-Workers (misma máquina o IP alcanzable):
+Edita `model.name_or_path`, `data.path`/`data.eval_path`, `coordinator.token`, etc. Requisito HF: `data.num_shards >= coordinator.max_workers`.
+
+## 5. Identidad BSV + bitbeam (diseño/uso)
+Sigue el patrón de meshllm: **descubrimiento/atado al canal por claves**, no solo por un secreto compartido.
+
+- **Claves por nodo**: genera/gestiona una identidad BSV (WIF/privada) por máquina (fuera del repo, permisos restrictivos). Usa `@bsv/sdk` para claves/firmas.
+- **Canal autenticado**: `BitBeam({from: workerPriv, to: coordPub}, { context: runId })` deriva el secreto compartido por ECDH para ese par. El coordinador acepta solo pubkeys en allowlist.
+- **Autorización**: el coordinador mantiene una allowlist (`allowed_pubkeys`) firmada/configurada; los workers presentan su pubkey al registrarse y el coordinador rechaza desconocidos.
+- **Firma de mensajes**: firma `register`/`delta`/manifiestos con la clave del nodo y verifica con `@bsv/sdk`. (Integración incremental; ver roadmap.)
+- **Descubrimiento**: `--p2p-topic` derivado desde la identidad del coordinador (o topic firmado), o lista de endpoints/bootstrap desde un **invite/token firmado** por el coordinador (estilo meshllm). LAN: mDNS opcional; WAN: DHT/bitbeam.
+
+> Hoy el túnel usa un topic compartido por simplicidad. El objetivo es migrar a **BSV + bitbeam por par** manteniendo la UX tipo meshllm (un comando/flag para unirse).
+
+## 6. Estado inicial HF
 ```bash
-./worker --config configs/local-qwen3-4b-2nodes.json \
-  --node-id node-0 --shard-id 0 --coordinator http://<IP_COORD>:8095 --device cuda
-./worker --config configs/local-qwen3-4b-2nodes.json \
-  --node-id node-1 --shard-id 1 --coordinator http://<IP_COORD>:8095 --device cuda
+# Exportar (si no existe)
+.venv/bin/python scripts/export_initial_state.py \
+  --config configs/local/qwen3-4b-2nodes.json \
+  --out runs/init-qwen3-4b-2nodes --device cuda
+# O auto
+./coordinator --config configs/local/qwen3-4b-2nodes.json --init-state auto ...
 ```
+El worker autodetecta `runs/init-<config-stem>` y hace **bootstrap local** si los hashes coinciden (evita descargar `/v1/state` grande).
 
-## 8. Multi-nodo sin IPs (bitbeam v4, `--p2p-topic`)
-Usa el mismo `--p2p-topic` en todos. El sidecar crea un túnel **bitbeam v4/DHT multiplexado persistente** (una conexión P2P por worker).
-
+## 7. Lanzar
+**Directo (LAN/Tailscale) — más determinista hoy:**
 ```bash
-./coordinator --config configs/local-qwen3-4b-2nodes.json \
-  --checkpoint-dir runs/qwen3-4b-2nodes --max-rounds 3 --no-wait \
-  --p2p-topic diloco-run-4b
-
-./worker --config configs/local-qwen3-4b-2nodes.json \
-  --node-id node-0 --shard-id 0 \
-  --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
+./coordinator --config configs/local/qwen3-4b-2nodes.json --checkpoint-dir runs/piloto --max-rounds 3 --no-wait
+./worker --config configs/local/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --coordinator http://<IP>:8095 --device cuda
 ```
-Notas:
-- Tras actualizar `network/holepunch-sidecar/index.js`, reinicia coordinador/workers.
-- Si el DHT tarda o el bootstrap es grande, usa `--init-state` local y/o transporte directo seguro (Tailscale/TLS).
-
-## 9. Dashboard / agent
+**P2P sin IPs (bitbeam v4):**
 ```bash
-./agent --open   # sirve web/ y abre http://127.0.0.1:8765/dashboard.html
+cd network/holepunch-sidecar && npm install
+./coordinator --config configs/local/qwen3-4b-2nodes.json --checkpoint-dir runs/piloto --max-rounds 3 --no-wait --p2p-topic diloco-run-4b
+./worker --config configs/local/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
 ```
-En el dashboard configura URL del coordinador (`http://127.0.0.1:8095` o túnel local), token, y (opcional) URL del agent para lanzar procesos. El agent es para **entornos confiables** (sin auth fuerte por defecto).
+Tras cambios en el sidecar, **reinicia** coordinador/workers.
 
-También puedes servir `web/` manualmente:
+## 8. Dashboard + agent
 ```bash
-cd web && python3 -m http.server 8000
+./agent --open  # sirve web/ en http://127.0.0.1:8765/dashboard.html
 ```
+Rellena URL del coordinador y token. El agent permite lanzar coordinador/worker desde la UI (entorno confiable). También puedes servir `web/` con un servidor HTTP estático.
 
-## 10. Troubleshooting
-- **`num_shards must be >= coordinator.max_workers`**: ajusta `data.num_shards`.
-- **HF pide exportar init state**: crea/descubre `runs/init-<config-stem>` o pasa `--init-state auto`.
-- **`IncompleteRead`/desconexión bajando estado**: usa `--init-state` local (mismo hash) o transporte directo; el worker reintenta requests seguras.
-- **Túnel no conecta**: verifica `npm install` en `network/holepunch-sidecar`, Node 18+, mismo topic, coordinador reiniciado con sidecar actual; prueba directo para aislar.
-- **`401/403`**: token incorrecto, base/config hash distinto, o worker expulsado/stale (revisa logs; el worker reintenta/recupera en casos soportados).
-- **Rutas de modelo/datos**: usa paths locales en un config no versionado.
+## 9. Solución de problemas
+- **Rutas personales**: usa config local fuera del repo/versionado.
+- **`num_shards >= max_workers`**: ajusta `data.num_shards`.
+- **Falta init-state HF**: `runs/init-<config-stem>` o `--init-state auto`.
+- **`IncompleteRead`/truncado**: usa init-state local (hash compatible) o transporte directo.
+- **Túnel falla**: `npm install` en sidecar, Node 18+, mismo topic, reiniciar sidecar, probar directo.
+- **403/401**: token/hash base/config distintos; revisar allowlist.
+- **Rejoin/churn**: el sistema soporta rejoin de nodos conocidos (recuperación orientativa ≤ 2 rondas).
 
-## 11. Seguridad e identidad (estado)
-- Token + validación `config_hash`/`base_hash`/`state_hash`; TLS/mTLS opcional.
-- Transporte: bitbeam v4 cifra el canal (DHT/Noise). Identidad BSV por nodo (claves con `@bsv/sdk`, `BitBeam {from,to}`), allowlist por pubkey y firma/verificación de mensajes están en roadmap.
-
-## 12. Referencias
+## 10. Documentación
 - `README.md`, `STATUS.md`, `ROADMAP.md`, `CHANGELOG.md`
-- `docs/03-comunicacion.md` (protocolo/transporte), `docs/07-seguridad.md`
+- `docs/03-comunicacion.md` (protocolo + bitbeam v4/mux + identidad BSV objetivo)
+- `docs/07-seguridad.md`, `docs/06-operaciones.md`
 - `docs/09-referencias.md`
+
+**Principio:** UX tipo meshllm (instalar, configurar, descubrir/unirse con un comando), pero transporte/identidad **BSV + bitbeam** en lugar de Nostr.
