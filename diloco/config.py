@@ -98,6 +98,8 @@ class CoordinatorConfig:
     tls_client_ca: str = ""
     tls_require_client_cert: bool = False
     tls_verify: bool = True
+    allowed_node_pubkeys: Tuple[str, ...] = ()
+    require_node_identity: bool = False
 
 
 @dataclass(frozen=True)
@@ -206,6 +208,8 @@ def _coordinator_from_dict(raw: Mapping[str, Any]) -> CoordinatorConfig:
         tls_client_ca=str(raw.get("tls_client_ca", "")),
         tls_require_client_cert=bool(raw.get("tls_require_client_cert", False)),
         tls_verify=bool(raw.get("tls_verify", True)),
+        allowed_node_pubkeys=_tuple(raw.get("allowed_node_pubkeys"), ()),
+        require_node_identity=bool(raw.get("require_node_identity", False)),
     )
 
 
