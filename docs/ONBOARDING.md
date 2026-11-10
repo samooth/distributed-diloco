@@ -22,12 +22,14 @@ Wrappers (usan `.venv/bin/python` si existe):
 ./coordinator --help
 ./worker --help
 ./agent --help
+./pilot --help
 ```
 
 ## 3. Verificación
 ```bash
 .venv/bin/python -m unittest discover -s tests -q  # 39 OK
 .venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
+./pilot preflight --config configs/smoke.json
 ```
 
 ## 4. Configuración (sin rutas personales)
@@ -40,23 +42,36 @@ Edita `model.name_or_path`, `data.path`/`data.eval_path`, `coordinator.token`, e
 ## 5. Identidad BSV + bitbeam
 Sigue el patrón de meshllm: **descubrimiento/atado al canal por claves**, no solo por un secreto compartido.
 
-### Estado actual (MVP de admisión)
-- Genera identidades: `scripts/identity_init.py --name node-0` → `runs/identity/node-0.json` (pubkey + WIF local, 600).
-- Worker envía `node_pubkey` en `/v1/register` con `--node-identity runs/identity/node-0.json`.
-- Coordinador aplica allowlist/admisión: `--allow-pubkey <hex>`, `--allow-pubkey-file <file>` (líneas o JSON), `--require-node-identity`, o `coordinator.allowed_node_pubkeys` / `coordinator.require_node_identity` en config.
-- Si la pubkey no está permitida o falta cuando es requerida → `403`.
+### Estado actual (MVP implementado)
+- **Identidades**: `scripts/identity_init.py --name node-0` → `runs/identity/node-0.json` (pubkey + WIF, 600, gitignored en `runs/`).
+- **Admisión**: worker registra `node_pubkey` con `--node-identity`; coordinador aplica allowlist/admisión (`--allow-pubkey`, `--allow-pubkey-file`, `--require-node-identity` o config). Pubkey no permitida/faltante requerida → `403`.
+- **Firmas (MVP)**: registro y metadatos de updates firmados con ECDSA (`@bsv/sdk` vía sidecar) y verificados por el coordinador cuando hay identidad/se requiere.
+- **Túnel por par (ECDH)**: con identidades, el sidecar usa `BitBeam({from,to}, {context})`.
+  - Coordinador: `--coordinator-identity ...` + allowlist de peers conocidos → listeners por par.
+  - Worker: `--node-identity ... --coordinator-pubkey <pubkey>` (o `--invite`).
+  - Fallback: `--p2p-topic` compartido si no hay identidad/peers para modo por par.
+- **Invite firmado**: coordinador `--print-invite runs/invite.json`; worker `--invite runs/invite.json` (verifica firma y autoconfigura topic/context/pubkey/endpoint cuando aplica).
+- **Pilot**: `./pilot preflight --config ...`, `./pilot identity --name ...`, `./pilot up ...`
 
-Ejemplo:
+Ejemplo (túnel por par + invite):
 ```bash
-./coordinator --config <local>.json --allow-pubkey-file runs/identity/node-0.json --allow-pubkey-file runs/identity/node-1.json --require-node-identity --p2p-topic diloco-run-4b ...
-./worker --config <local>.json --node-id node-0 --node-identity runs/identity/node-0.json --p2p-topic diloco-run-4b ...
+.venv/bin/python scripts/identity_init.py --name coordinator
+.venv/bin/python scripts/identity_init.py --name node-0
+.venv/bin/python scripts/identity_init.py --name node-1
+
+./coordinator --config <local>.json --coordinator-identity runs/identity/coordinator.json \
+  --allow-pubkey-file runs/identity/node-0.json --allow-pubkey-file runs/identity/node-1.json \
+  --require-node-identity --p2p-topic diloco-run-4b --print-invite runs/invite.json --max-rounds 3 --no-wait
+
+./worker --config <local>.json --node-id node-0 --shard-id 0 --device cuda \
+  --node-identity runs/identity/node-0.json --invite runs/invite.json
 ```
 
-### Objetivo (siguientes pasos)
-- **Canal por par**: `BitBeam({from: workerPriv, to: coordPub}, { context: runId })` (ECDH) en vez de topic compartido.
-- **Firma/verificación** de `register`, deltas y manifiestos con `@bsv/sdk`.
-- **Invite firmado** por el coordinador (pubkey, bootstrap/topic, política, expiración) para unirse con un flag/comando.
-- LAN/mDNS opcional; WAN por DHT/bitbeam.
+### Pendiente
+- Validación E2E NAT/Internet y reconexión automática del beam.
+- Firma/verificación de manifiestos/checkpoints y política criptográfica completa.
+- Peers dinámicos/late join en túnel identidad del coordinador (hoy requiere peers conocidos al iniciar).
+- Rotación/revocación de claves y UX de join más automática (mDNS/LAN, `pilot up` completo).
 
 ## 6. Estado inicial HF
 ```bash
@@ -75,19 +90,25 @@ El worker autodetecta `runs/init-<config-stem>` y hace **bootstrap local** si lo
 ./coordinator --config configs/local/qwen3-4b-2nodes.json --checkpoint-dir runs/piloto --max-rounds 3 --no-wait
 ./worker --config configs/local/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --coordinator http://<IP>:8095 --device cuda
 ```
-**P2P sin IPs (bitbeam v4):**
+**P2P sin IPs (bitbeam v4, topic compartido):**
 ```bash
 cd network/holepunch-sidecar && npm install
 ./coordinator --config configs/local/qwen3-4b-2nodes.json --checkpoint-dir runs/piloto --max-rounds 3 --no-wait --p2p-topic diloco-run-4b
 ./worker --config configs/local/qwen3-4b-2nodes.json --node-id node-0 --shard-id 0 --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
 ```
+**P2P por par con identidad + invite:**
+```bash
+./coordinator ... --coordinator-identity runs/identity/coordinator.json --allow-pubkey-file runs/identity/node-0.json --p2p-topic diloco-run-4b --print-invite runs/invite.json
+./worker ... --node-identity runs/identity/node-0.json --invite runs/invite.json
+```
 Tras cambios en el sidecar, **reinicia** coordinador/workers.
 
 ## 8. Dashboard + agent
 ```bash
-./agent --open  # sirve web/ en http://127.0.0.1:8765/dashboard.html
+./agent --open                     # sirve web/ en http://127.0.0.1:8765/dashboard.html
+./agent --token <secret> --open    # protege endpoints de control (POST)
 ```
-Rellena URL del coordinador y token. El agent permite lanzar coordinador/worker desde la UI (entorno confiable). También puedes servir `web/` con un servidor HTTP estático.
+Rellena URL del coordinador y token. El agent permite lanzar coordinador/worker desde la UI (entorno confiable/local por defecto). También puedes servir `web/` con un servidor HTTP estático.
 
 ## 9. Solución de problemas
 - **Rutas personales**: usa config local fuera del repo/versionado.

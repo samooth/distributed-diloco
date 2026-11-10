@@ -86,6 +86,10 @@ else:
                     node_id=str(request.node_id),
                     config_hash=str(request.config_hash),
                     base_hash=str(request.base_hash),
+                    node_pubkey=str(getattr(request, "node_pubkey", "") or ""),
+                    node_sig=str(getattr(request, "node_sig", "") or ""),
+                    sig_alg=str(getattr(request, "sig_alg", "") or ""),
+                    run_id=str(getattr(request, "run_id", "") or ""),
                 )
             except Exception as exc:  # noqa: BLE001
                 from .coordinator import ApiError
@@ -174,6 +178,7 @@ else:
                     weight=float(meta.get("weight", 1.0)),
                     train_loss=float(meta.get("train_loss", 0.0)),
                     update_hash="grpc",
+                    node_sig=str(meta.get("node_sig", "") or ""),
                 )
             except Exception as exc:  # noqa: BLE001
                 from .coordinator import ApiError
@@ -261,11 +266,32 @@ else:
                 return None
             return (("x-diloco-token", self.token),)
 
-        def register(self, node_id: str, config_hash: str, base_hash: str) -> Dict[str, Any]:
-            response = self.stub.Register(
-                pb2.RegisterRequest(node_id=node_id, config_hash=config_hash, base_hash=base_hash),
-                metadata=self._metadata(),
-            )
+        def register(
+            self,
+            node_id: str,
+            config_hash: str,
+            base_hash: str,
+            node_pubkey: str = "",
+            node_sig: str = "",
+            sig_alg: str = "",
+            run_id: str = "",
+            **_kwargs: Any,
+        ) -> Dict[str, Any]:
+            base = dict(node_id=node_id, config_hash=config_hash, base_hash=base_hash)
+            extra = {}
+            if node_pubkey:
+                extra["node_pubkey"] = node_pubkey
+            if node_sig:
+                extra["node_sig"] = node_sig
+            if sig_alg:
+                extra["sig_alg"] = sig_alg
+            if run_id:
+                extra["run_id"] = run_id
+            try:
+                req = pb2.RegisterRequest(**base, **extra)
+            except (TypeError, ValueError):
+                req = pb2.RegisterRequest(**base)
+            response = self.stub.Register(req, metadata=self._metadata())
             return {
                 "ok": bool(response.ok),
                 "node_id": str(response.node_id),

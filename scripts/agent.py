@@ -8,6 +8,7 @@ for trusted LAN/Tailscale environments only.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import logging
 import mimetypes
@@ -21,7 +22,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -44,6 +45,8 @@ def _launch(cmd: List[str], log_path: Path) -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
+    AGENT_TOKEN = ""
+
     def _send(self, status: int, payload: Any) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -54,6 +57,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _authorized(self) -> bool:
+        if not self.AGENT_TOKEN:
+            return True
+        got = self.headers.get("X-DiLoCo-Token", "")
+        if not got:
+            qs = parse_qs(urlparse(self.path).query)
+            got = (qs.get("token") or [""])[-1]
+        try:
+            return bool(got) and hmac.compare_digest(str(got), str(self.AGENT_TOKEN))
+        except Exception:
+            return False
 
     def do_OPTIONS(self) -> None:
         self._send(204, {})
@@ -102,6 +117,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:
+        if not self._authorized():
+            self._send(401, {"error": "unauthorized"})
+            return
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length else b"{}"
         try:
@@ -116,12 +134,22 @@ class Handler(BaseHTTPRequestHandler):
             device = payload.get("device", "cpu")
             topic = payload.get("p2p_topic")
             init_state = payload.get("init_state", "")
+            coordinator_identity = payload.get("coordinator_identity", "")
+            p2p_context = payload.get("p2p_context", "")
             cmd = [PYTHON, "scripts/run_coordinator.py", "--config", config, "--device", device,
                    "--reset", "--max-rounds", str(max_rounds), "--no-wait"]
             if init_state:
                 cmd += ["--init-state", init_state]
             if topic:
                 cmd += ["--p2p-topic", topic]
+            if coordinator_identity:
+                cmd += ["--coordinator-identity", coordinator_identity]
+            if p2p_context:
+                cmd += ["--p2p-context", p2p_context]
+            if payload.get("require_node_identity"):
+                cmd += ["--require-node-identity"]
+            for pk in (payload.get("allow_pubkeys") or []):
+                cmd += ["--allow-pubkey", str(pk)]
             log_path = PROJECT_ROOT / "runs" / "agent" / f"coordinator-{int(time.time())}.log"
             pid = _launch(cmd, log_path)
             self._send(200, {"id": pid, "cmd": cmd})
@@ -137,6 +165,9 @@ class Handler(BaseHTTPRequestHandler):
             tunnel_port = payload.get("tunnel_listen_port", 0)
             init_state = payload.get("init_state", "")
             node_identity = payload.get("node_identity", "")
+            coordinator_pubkey = payload.get("coordinator_pubkey", "")
+            p2p_context = payload.get("p2p_context", "")
+            invite = payload.get("invite", "")
             cmd = [PYTHON, "scripts/run_worker.py", "--config", config,
                    "--node-id", node_id, "--shard-id", str(shard_id), "--device", device]
             if coordinator:
@@ -149,6 +180,12 @@ class Handler(BaseHTTPRequestHandler):
                 cmd += ["--init-state", init_state]
             if node_identity:
                 cmd += ["--node-identity", node_identity]
+            if coordinator_pubkey:
+                cmd += ["--coordinator-pubkey", coordinator_pubkey]
+            if p2p_context:
+                cmd += ["--p2p-context", p2p_context]
+            if invite:
+                cmd += ["--invite", invite]
             log_path = PROJECT_ROOT / "runs" / "agent" / f"{node_id}-{int(time.time())}.log"
             pid = _launch(cmd, log_path)
             self._send(200, {"id": pid, "cmd": cmd})
@@ -175,9 +212,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="DiLoCo process agent for web UI")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--token", default="", help="require X-DiLoCo-Token for control endpoints (POST)")
     parser.add_argument("--open", action="store_true", help="open dashboard in browser")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    Handler.AGENT_TOKEN = str(args.token or "")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host if args.host != '0.0.0.0' else '127.0.0.1'}:{args.port}/dashboard.html"
     logging.info("agent listening on %s (serves web/ + /health, /processes, /launch/*, /stop)", url)

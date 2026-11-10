@@ -190,6 +190,24 @@ class Worker:
 
     def register(self) -> Dict[str, Any]:
         pubkey = str((self.node_identity or {}).get("pubkey", "")).strip()
+        body_dict = {
+            "node_id": self.node_id,
+            "config_hash": self.config.fingerprint(),
+            "base_hash": self.backend.base_fingerprint(),
+            "run_id": self.config.run_id,
+        }
+        if pubkey:
+            body_dict["node_pubkey"] = pubkey
+        if self.node_identity_path and pubkey:
+            try:
+                from .identity import canonical_register, sign_message
+                msg = canonical_register(self.node_id, self.config.fingerprint(), self.backend.base_fingerprint(), self.config.run_id)
+                sig = sign_message(self.node_identity_path, msg)
+                body_dict["node_sig"] = sig.get("sig", "")
+                body_dict["sig_alg"] = sig.get("alg", "")
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("%s could not sign registration: %s", self.node_id, exc)
+
         client = self._get_grpc_client()
         if client is not None:
             try:
@@ -198,21 +216,25 @@ class Worker:
                     config_hash=self.config.fingerprint(),
                     base_hash=self.backend.base_fingerprint(),
                     node_pubkey=pubkey,
+                    node_sig=str(body_dict.get("node_sig", "")),
+                    sig_alg=str(body_dict.get("sig_alg", "")),
+                    run_id=self.config.run_id,
                 )
             except TypeError:
                 # Backward compat with older gRPC clients
-                return client.register(
-                    node_id=self.node_id,
-                    config_hash=self.config.fingerprint(),
-                    base_hash=self.backend.base_fingerprint(),
-                )
-        body_dict = {
-            "node_id": self.node_id,
-            "config_hash": self.config.fingerprint(),
-            "base_hash": self.backend.base_fingerprint(),
-        }
-        if pubkey:
-            body_dict["node_pubkey"] = pubkey
+                try:
+                    return client.register(
+                        node_id=self.node_id,
+                        config_hash=self.config.fingerprint(),
+                        base_hash=self.backend.base_fingerprint(),
+                        node_pubkey=pubkey,
+                    )
+                except TypeError:
+                    return client.register(
+                        node_id=self.node_id,
+                        config_hash=self.config.fingerprint(),
+                        base_hash=self.backend.base_fingerprint(),
+                    )
         body = json.dumps(body_dict).encode("utf-8")
         status, raw, _ = self._request("POST", "/v1/register", body)
         payload = json.loads(raw.decode("utf-8"))
@@ -461,6 +483,23 @@ class Worker:
                 "train_seconds": train_seconds,
                 "compression": compression,
             }
+            pubkey = str((self.node_identity or {}).get("pubkey", "")).strip()
+            if self.node_identity_path and pubkey:
+                try:
+                    from .identity import canonical_update, sign_message
+                    msg = canonical_update(
+                        self.node_id,
+                        round_id,
+                        "",
+                        self.config.fingerprint(),
+                        str(meta.get("state_hash", "")),
+                    )
+                    sig = sign_message(self.node_identity_path, msg)
+                    payload_meta["node_pubkey"] = pubkey
+                    payload_meta["node_sig"] = sig.get("sig", "")
+                    payload_meta["sig_alg"] = sig.get("alg", "")
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning("%s could not sign update: %s", self.node_id, exc)
             client = self._get_grpc_client()
             if client is not None:
                 blob = pack_message(payload_meta, upload_state)

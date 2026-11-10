@@ -24,11 +24,11 @@ Nesterov. La base queda congelada (NF4/QLoRA), cada isla cabe en una GPU domést
 | 🌐 **Coordinador** | HTTP/gRPC, token, quorum, deadline, heartbeat, late join, `/v1/state_meta` |
 | 📦 **Compresión** | int8 (4×), top-k + error feedback |
 | 🔄 **Churn** | rejoin, evicción, recuperación ≤ 2 rondas (test integrado) |
-| 🔐 **Seguridad** | TLS/mTLS opcional, validación base/config/hash; identidad BSV/bitbeam en roadmap |
+| 🔐 **Seguridad** | TLS/mTLS opcional, validación base/config/hash; identidad BSV por nodo + allowlist/admisión por pubkey, firma ECDSA de registro/deltas (MVP), túneles bitbeam por par ECDH |
 | 💾 **Storage** | checkpoints atómicos, retención, object store local/S3 |
-| 🌍 **P2P/WAN** | túnel **bitbeam v4** (DHT) multiplexado persistente (`--p2p-topic`), emulación WAN |
+| 🌍 **P2P/WAN** | túnel **bitbeam v4** (DHT) multiplexado persistente (`--p2p-topic`), canal por par ECDH con identidad BSV, emulación WAN |
 | 🖥️ **Web** | landing + consola operativa + monitor de red |
-| ⌨️ **CLI/UX** | wrappers `./coordinator` `./worker` `./agent`, wizards, autodetección de init-state |
+| ⌨️ **CLI/UX** | wrappers `./coordinator` `./worker` `./agent` `./pilot`, wizards, autodetección de init-state, invite firmado |
 
 ## 🏗️ Arquitectura
 
@@ -70,11 +70,25 @@ Nesterov. La base queda congelada (NF4/QLoRA), cada isla cabe en una GPU domést
 ```
 Si el worker tiene el mismo `init-state` local (hash compatible), no descarga el estado global completo.
 
+**Identidad BSV + invite firmado (MVP):**
+```bash
+.venv/bin/python scripts/identity_init.py --name coordinator
+.venv/bin/python scripts/identity_init.py --name node-0
+./coordinator --config <local>.json --coordinator-identity runs/identity/coordinator.json \
+  --allow-pubkey-file runs/identity/node-0.json --require-node-identity \
+  --p2p-topic diloco-run-4b --print-invite runs/invite.json --max-rounds 3 --no-wait
+./worker --config <local>.json --node-id node-0 --shard-id 0 --device cuda \
+  --node-identity runs/identity/node-0.json --invite runs/invite.json
+./pilot preflight --config <local>.json
+```
+
 ## 🌍 P2P (bitbeam v4)
 ```bash
 cd network/holepunch-sidecar && npm install
 ```
-El túnel es persistente y multiplexado (no crea un lookup por request). Requiere Node.js y conectividad DHT. Para bootstrap grande inestable, usa `--init-state` local o transporte directo/Tailscale.
+- **Topic compartido (fallback):** `--p2p-topic` crea un túnel persistente multiplexado (una conexión por worker).
+- **Por par (identidad):** con `--coordinator-identity` + allowlist de peers y `--node-identity` + `--coordinator-pubkey` (o `--invite`), el túnel usa ECDH BSV por par (`BitBeam({from,to}, context)`).
+- Requiere Node.js y conectividad DHT. Para bootstrap grande inestable, usa `--init-state` local o transporte directo/Tailscale.
 
 ## 📚 Documentación
 - [Onboarding](docs/ONBOARDING.md) — de cero a tu primera ronda.

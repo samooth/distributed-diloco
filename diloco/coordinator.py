@@ -249,6 +249,9 @@ class Coordinator:
                             config_hash=str(payload.get("config_hash", "")),
                             base_hash=str(payload.get("base_hash", "")),
                             node_pubkey=str(payload.get("node_pubkey", "") or ""),
+                            node_sig=str(payload.get("node_sig", "") or ""),
+                            sig_alg=str(payload.get("sig_alg", "") or ""),
+                            run_id=str(payload.get("run_id", "") or ""),
                         )
                         self._send_json(200, result)
                         return
@@ -289,6 +292,7 @@ class Coordinator:
                             weight=float(meta.get("weight", 1.0)),
                             train_loss=float(meta.get("train_loss", 0.0)),
                             update_hash=hash_blob(body),
+                            node_sig=str(meta.get("node_sig", "") or ""),
                         )
                         self._send_bytes(200, result, "application/octet-stream")
                         return
@@ -396,7 +400,16 @@ class Coordinator:
             "registered": sorted(self.registered),
         }
 
-    def register(self, node_id: str, config_hash: str, base_hash: str, node_pubkey: str = "") -> Dict[str, Any]:
+    def register(
+        self,
+        node_id: str,
+        config_hash: str,
+        base_hash: str,
+        node_pubkey: str = "",
+        node_sig: str = "",
+        sig_alg: str = "",
+        run_id: str = "",
+    ) -> Dict[str, Any]:
         if not node_id or len(node_id) > 128:
             raise ApiError(400, "node_id must be 1-128 characters")
         expected = self.config.fingerprint()
@@ -405,11 +418,28 @@ class Coordinator:
         if not hmac.compare_digest(str(base_hash), self.base_hash):
             raise ApiError(409, "base model fingerprint mismatch")
         node_pubkey = str(node_pubkey or "").strip()
+        node_sig = str(node_sig or "").strip()
+        sig_alg = str(sig_alg or "").strip()
+        run_id = str(run_id or self.config.run_id)
         allowed = tuple(self.config.coordinator.allowed_node_pubkeys or ())
         if self.config.coordinator.require_node_identity and not node_pubkey:
             raise ApiError(403, "node identity is required")
         if allowed and node_pubkey not in allowed:
             raise ApiError(403, "node pubkey is not allowed")
+        if node_pubkey and node_sig:
+            try:
+                from .identity import canonical_register, verify_message
+                msg = canonical_register(node_id, str(config_hash), str(base_hash), run_id)
+                if not verify_message(node_pubkey, msg, node_sig):
+                    raise ApiError(403, "invalid node signature")
+            except ApiError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise ApiError(403, f"signature verification failed: {exc}") from exc
+        elif self.config.coordinator.require_node_identity:
+            # Pubkey provided but no signature while identity required
+            raise ApiError(403, "node signature is required")
+
         with self.cond:
             self._evict_stale_locked()
             if self.failure:
@@ -482,6 +512,7 @@ class Coordinator:
         weight: float,
         train_loss: float,
         update_hash: str,
+        node_sig: str = "",
     ) -> bytes:
         if weight <= 0 or not torch.isfinite(torch.tensor(weight)).item():
             raise ApiError(400, "weight must be positive and finite")
@@ -495,6 +526,20 @@ class Coordinator:
                     409,
                     f"stale round {round_id}; current round is {self.round_index}",
                 )
+            node_sig = str(node_sig or "").strip()
+            reg_pub = str(self.registered[node_id].get("node_pubkey", "") or "")
+            if node_sig and reg_pub:
+                try:
+                    from .identity import canonical_update, verify_message
+                    msg = canonical_update(node_id, int(round_id), "", self.config.fingerprint(), self._state_hash)
+                    if not verify_message(reg_pub, msg, node_sig):
+                        raise ApiError(403, "invalid update signature")
+                except ApiError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    raise ApiError(403, f"update signature verification failed: {exc}") from exc
+            elif self.config.coordinator.require_node_identity and reg_pub:
+                raise ApiError(403, "update signature is required")
             if node_id in self.updates:
                 raise ApiError(409, "duplicate update for this round")
             if set(delta) != set(self.global_state):

@@ -6,17 +6,27 @@ Notas detalladas de cambios y decisiones. El `README.md` es la presentación.
 
 ### Añadido
 - **Bitbeam v4 como transporte de túnel P2P** (`network/holepunch-sidecar`): `tunnel-server`/`tunnel-client` usan `bitbeam@4` sobre `@hyperswarm/dht` con **multiplexado persistente** de substreams TCP (una conexión P2P por worker, no un lookup por request HTTP). Clave determinista derivada de `--p2p-topic`.
+- **Túnel por par con identidad BSV/ECDH**: sidecar soporta `--identity`/`--peer-pubkey`/`--context` para canales `BitBeam({from,to},context)` por peer; `run_coordinator.py` (`--coordinator-identity`, `--p2p-context`) y `run_worker.py` (`--coordinator-pubkey`) seleccionan modo identidad o fallback por topic.
+- **Identidad BSV (MVP)**: `scripts/identity_init.py`, `network/holepunch-sidecar/identity.js` (generate/pubkey/sign/verify, ECDSA-SHA256-DER), `diloco/identity.py`.
+- **Admisión y firma de protocolo (MVP)**: registro con `node_pubkey` + firma verificada, allowlist (`--allow-pubkey*`, `--require-node-identity`, config), firma de metadatos de update verificada por coordinador; gRPC tolera campos de identidad.
+- **Invite firmado + UX**: `--print-invite` en coordinador, `--invite` en worker (verificación y autoconfiguración de topic/context/pubkey), `scripts/pilot.py` (`preflight|identity|up`) y wrapper `./pilot`.
 - **`GET /v1/state_meta`** (coordinador, autenticado): metadatos de ronda/estado sin descargar el blob completo.
 - **Bootstrap local de estado inicial** (worker): `--init-state` carga el bundle local si `state_hash`/`base_hash`/`config_hash` coinciden con el coordinador; evita descargas grandes por túnel en round 0.
 - **Autodetección/export de init state**: `run_worker.py`/`run_coordinator.py` descubren `runs/init-<config-stem>` para HF; `--init-state auto` en coordinador exporta el adaptador si falta.
-- **Wrappers raíz**: `./coordinator`, `./worker`, `./agent` (usan `.venv/bin/python` si existe).
-- **Agent web**: `scripts/agent.py` sirve `web/` en el mismo origen, añade `--open` y pasa `init_state` al lanzar workers.
+- **Wrappers raíz**: `./coordinator`, `./worker`, `./agent`, `./pilot` (usan `.venv/bin/python` si existe).
+- **Agent web**: `scripts/agent.py` sirve `web/` en el mismo origen, añade `--open`, pasa parámetros de identidad/invite y soporta `--token` para proteger endpoints de control (POST).
 - **Reintentos de red** en worker para requests seguras (`GET`, heartbeat/register/leave) ante `IncompleteRead`/desconexiones.
 
 ### Cambiado
 - `/v1/status` (y alias `/v1/metrics`) incluye `config_hash`.
 - `configs/qwen3-4b-2nodes.json`: `num_shards=4` (cumple `>= max_workers`) y rutas/modelo como placeholders.
 - Documentación actualizada (README, ONBOARDING, 03-comunicación, STATUS, ROADMAP).
+
+### Notas
+- El túnel bitbeam requiere `cd network/holepunch-sidecar && npm install` en cada máquina. Tras cambios en `index.js`/`identity.js`, reiniciar procesos que lanzan el sidecar.
+- `--init-state auto` en coordinador puede cargar el modelo base; para 32B/70B exportar en una máquina adecuada y distribuir el bundle.
+- Identidades/WIF en `runs/identity/*.json` son privadas (gitignored bajo `runs/`); el túnel identidad por par requiere allowlist de peers conocida por el coordinador al iniciar (fallback por topic disponible).
+- Firmas/validación NAT E2E, reconexión automática y hardening completo del agent siguen pendientes.
 
 ### Notas
 - El túnel bitbeam requiere `cd network/holepunch-sidecar && npm install` en cada máquina. Tras cambios en `index.js`, reiniciar procesos que lanzan el sidecar.

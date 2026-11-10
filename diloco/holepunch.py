@@ -29,6 +29,11 @@ class HolepunchSidecar:
         storage: Optional[str] = None,
         directory: Optional[str] = None,
         node_bin: str = "node",
+        identity: Optional[str] = None,
+        peer_pubkey: Optional[str] = None,
+        peer_pubkeys: Optional[list[str]] = None,
+        peer_pubkey_files: Optional[list[str]] = None,
+        context: Optional[str] = None,
     ) -> None:
         self.mode = mode
         self.topic = topic
@@ -42,6 +47,11 @@ class HolepunchSidecar:
         self.storage = storage
         self.directory = directory
         self.node_bin = node_bin or "node"
+        self.identity = identity
+        self.peer_pubkey = peer_pubkey
+        self.peer_pubkeys = list(peer_pubkeys or [])
+        self.peer_pubkey_files = list(peer_pubkey_files or [])
+        self.context = context
         self.process: Optional[subprocess.Popen[str]] = None
 
     def command(self) -> list[str]:
@@ -63,6 +73,18 @@ class HolepunchSidecar:
             command.extend(["--storage", self.storage])
         if self.directory is not None:
             command.extend(["--dir", self.directory])
+        if self.identity is not None:
+            command.extend(["--identity", self.identity])
+        if self.peer_pubkey is not None:
+            command.extend(["--peer-pubkey", self.peer_pubkey])
+        for pk in self.peer_pubkeys:
+            if pk:
+                command.extend(["--peer-pubkey", str(pk)])
+        for pf in self.peer_pubkey_files:
+            if pf:
+                command.extend(["--peer-pubkey-file", str(pf)])
+        if self.context is not None:
+            command.extend(["--context", self.context])
         return command
 
     def start(self) -> None:

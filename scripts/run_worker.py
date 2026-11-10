@@ -26,6 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--discover-topic", help="Hyperswarm topic used to discover the coordinator")
     parser.add_argument("--discovery-timeout", type=float, default=30.0)
     parser.add_argument("--p2p-topic", help="Hyperswarm topic used as the coordinator transport")
+    parser.add_argument("--p2p-context", default="", help="bitbeam context for identity tunnels (default: run_id)")
+    parser.add_argument("--coordinator-pubkey", default="", help="coordinator BSV pubkey for per-pair identity tunnel")
     parser.add_argument("--tunnel-listen-host", default="127.0.0.1")
     parser.add_argument("--tunnel-listen-port", type=int, default=0)
     parser.add_argument("--shard-id", type=int, default=0)
@@ -34,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grpc-target", help="host:port for transport='grpc'")
     parser.add_argument("--init-state", default="", help="local adapter bundle from export_initial_state.py; skips downloading global state when hash matches")
     parser.add_argument("--node-identity", default="", help="path to BSV identity JSON (pubkey/wif)")
+    parser.add_argument("--invite", default="", help="path to coordinator join invite JSON")
     parser.add_argument("--tls-cert", default="")
     parser.add_argument("--tls-key", default="")
     parser.add_argument("--tls-client-ca", default="")
@@ -52,6 +55,38 @@ def main() -> int:
     if not config_path.is_absolute():
         config_path = PROJECT_ROOT / config_path
     cfg = load_config(config_path, base_dir=PROJECT_ROOT)
+
+    if args.invite:
+        invite_path = Path(args.invite)
+        if not invite_path.is_absolute():
+            invite_path = (PROJECT_ROOT / invite_path).resolve()
+        try:
+            invite = json.loads(invite_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise SystemExit(f"cannot read invite {invite_path}: {exc}")
+        if invite.get("sig") and invite.get("signed_by"):
+            try:
+                from diloco.identity import canonical_invite, verify_message
+                inv_copy = {k: v for k, v in invite.items() if k not in ("sig", "sig_alg", "signed_by")}
+                if not verify_message(str(invite["signed_by"]), canonical_invite(inv_copy), str(invite["sig"])):
+                    raise SystemExit("invite signature verification failed")
+                logging.info("invite signature verified (coordinator=%s)", str(invite.get("signed_by", ""))[:16] + "...")
+            except SystemExit:
+                raise
+            except Exception as exc:
+                logging.warning("could not verify invite signature: %s", exc)
+        if not args.p2p_topic and invite.get("topic"):
+            args.p2p_topic = str(invite["topic"])
+        if not getattr(args, "p2p_context", "") and invite.get("context"):
+            args.p2p_context = str(invite["context"])
+        if not args.coordinator_pubkey and invite.get("coordinator_pubkey"):
+            args.coordinator_pubkey = str(invite["coordinator_pubkey"])
+        if not args.coordinator and not args.discover_topic and not args.p2p_topic and not args.grpc_target and invite.get("endpoint"):
+            ep = str(invite.get("endpoint", ""))
+            if ep and not ep.startswith("http://0.0.0.0") and not ep.startswith("http://127.0.0.1:0"):
+                args.coordinator = ep
+        logging.info("loaded invite for run %s", invite.get("run_id", "?"))
+
     if args.coordinator and (args.discover_topic or args.p2p_topic):
         raise SystemExit("use only one of --coordinator, --discover-topic or --p2p-topic")
     if not args.coordinator and not args.discover_topic and not args.p2p_topic and not args.grpc_target:
@@ -60,6 +95,14 @@ def main() -> int:
     grpc_target = args.grpc_target
     if grpc_target and not coordinator_url:
         coordinator_url = f"grpc://{grpc_target}"
+
+    node_identity = (args.node_identity or "").strip()
+    if node_identity:
+        ip = Path(node_identity)
+        if not ip.is_absolute():
+            ip = (PROJECT_ROOT / ip).resolve()
+        node_identity = str(ip)
+
     sidecar = None
     if args.discover_topic:
         from diloco.holepunch import discover_coordinator
@@ -70,13 +113,19 @@ def main() -> int:
         from diloco.holepunch import HolepunchSidecar
 
         listen_port = args.tunnel_listen_port or (cfg.coordinator.port + 10000 if cfg.coordinator.port else 18080)
-        sidecar = HolepunchSidecar(
+        coord_pubkey = (args.coordinator_pubkey or "").strip()
+        context = (args.p2p_context or cfg.run_id or args.p2p_topic).strip()
+        tunnel_kwargs = dict(
             mode="tunnel-client",
             topic=args.p2p_topic,
             name=args.node_id,
             listen_host=args.tunnel_listen_host,
             listen_port=listen_port,
         )
+        if node_identity and coord_pubkey:
+            tunnel_kwargs.update(identity=node_identity, peer_pubkey=coord_pubkey, context=context)
+            logging.info("using identity bitbeam tunnel (peer=%s, context=%s)", coord_pubkey[:16] + "...", context)
+        sidecar = HolepunchSidecar(**tunnel_kwargs)
         sidecar.start()
         sidecar.wait_for_ready()
         coordinator_url = f"http://{args.tunnel_listen_host}:{listen_port}"
@@ -110,12 +159,6 @@ def main() -> int:
         if not init_path.is_absolute():
             init_path = (PROJECT_ROOT / init_path).resolve()
         init_state = str(init_path)
-    node_identity = (args.node_identity or "").strip()
-    if node_identity:
-        ip = Path(node_identity)
-        if not ip.is_absolute():
-            ip = (PROJECT_ROOT / ip).resolve()
-        node_identity = str(ip)
     worker = Worker(
         cfg,
         args.node_id,

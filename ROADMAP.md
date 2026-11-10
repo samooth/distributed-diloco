@@ -26,25 +26,31 @@ Leyenda: `[x]` hecho, `[~]` parcial, `[ ]` pendiente.
 - [x] Rejoin/late join, evicción, `/v1/leave`, retención, object store.
 - [x] Emulación WAN.
 - [x] Túnel P2P por `--p2p-topic` (bitbeam v4 + mux persistente) y modos auxiliares sidecar.
+- [x] Túnel por par con identidad BSV/ECDH (`BitBeam({from,to},context)`) cuando se proveen identidades/peers (fallback a topic compartido).
 - [x] `/v1/state_meta` y bootstrap local para evitar descarga completa del estado.
 - [x] Reintentos worker para requests seguras.
-- [~] gRPC/mTLS real (existe; integración/UX puede ampliarse).
-- [ ] Validación E2E del túnel bitbeam en NAT/Internet real, reconexión, métricas de latencia/bytes.
+- [~] gRPC/mTLS real (existe; integración/UX/proto de identidad puede ampliarse).
+- [ ] Validación E2E del túnel bitbeam en NAT/Internet real, reconexión automática del beam, métricas de latencia/bytes.
 - [ ] Integración completa gateway WebSocket como transporte primario opcional.
 - [ ] Descarga de estado chunked/reanudable o diff por hash/ronda.
 
 ## Seguridad e identidad
 - [x] Token coordinador, TLS/mTLS opcional, validación de base/config/hash.
-- [~] Agent local para launcher (sirve web, sin auth fuerte; solo entornos confiables).
-- [ ] Auth/allowlist/rate limit para agent y hardening de gateway.
-- [ ] Identidad BSV por nodo con `@bsv/sdk` + bitbeam `{from,to}`, allowlist por pubkey.
-- [ ] Firma/verificación de registros, deltas y manifiestos de checkpoint.
+- [x] Generación de identidad BSV por nodo (`@bsv/sdk`, `scripts/identity_init.py`).
+- [x] Admisión por pubkey/allowlist en `/v1/register` (`--node-identity`, `--allow-pubkey*`, `--require-node-identity`).
+- [x] Firma/verificación ECDSA (MVP) de registro y metadatos de update vía sidecar.
+- [~] Agent local para launcher (sirve web, `--token` para POST, sin auth completa de lectura/UI; solo entornos confiables).
+- [ ] Firma/verificación de manifiestos/checkpoints y política criptográfica completa end-to-end.
+- [ ] Rotación/revocación de claves, protección de WIF, allowlist dinámica segura.
+- [ ] Auth/allowlist/rate limit completa para agent y hardening de gateway.
 
 ## UX / DX
-- [x] Wrappers raíz: `./coordinator`, `./worker`, `./agent`.
+- [x] Wrappers raíz: `./coordinator`, `./worker`, `./agent`, `./pilot`.
 - [x] Agent sirve `web/` y `--open`.
 - [x] Wizards (clásico/TUI) y consola web.
-- [ ] `pilot/up` 1-comando (preflight, export, launch, join card, dashboard prellenado).
+- [x] Invite firmado `--print-invite` / `--invite` (MVP).
+- [x] `pilot.py` básico (`preflight`, `identity`, `up`).
+- [ ] `pilot/up` 1-comando completo (preflight profundo, export, launch coord/workers, join card, dashboard prellenado).
 - [ ] Logs en vivo, perfiles locales gitignored, i18n completa de UI.
 - [ ] `make setup`/script de instalación (Python + Node sidecar).
 

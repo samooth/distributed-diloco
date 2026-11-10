@@ -9,21 +9,32 @@ const Corestore = require('corestore')
 const HyperDB = require('hyperdb')
 const dbDef = require('./spec/hyperdb')
 
-let _BitBeam, _DHT, _b4a, _b32
+const identity = require('./identity')
+
+let _BitBeam, _DHT, _b4a, _b32, _bsv
 function beamDeps() {
   if (!_BitBeam) {
     _BitBeam = require('bitbeam')
     _DHT = require('@hyperswarm/dht')
     _b4a = require('b4a')
     _b32 = require('hi-base32')
+    _bsv = require('@bsv/sdk')
   }
-  return { BitBeam: _BitBeam, DHT: _DHT, b4a: _b4a, b32: _b32 }
+  return { BitBeam: _BitBeam, DHT: _DHT, b4a: _b4a, b32: _b32, bsv: _bsv }
 }
 
 function arg(name, fallback = null) {
   const index = process.argv.indexOf(name)
   if (index === -1) return fallback
   return process.argv[index + 1]
+}
+
+function args(name) {
+  const out = []
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === name && i + 1 < process.argv.length) out.push(process.argv[i + 1])
+  }
+  return out
 }
 
 function topicBuffer(topic) {
@@ -34,6 +45,45 @@ function topicToBeamKey(topic) {
   // Deterministic passphrase compatible with bitbeam v4 (base32, 32 bytes)
   const { BitBeam } = beamDeps()
   return BitBeam.toBase32(topicBuffer(topic))
+}
+
+function loadIdentityFile(file) {
+  return identity.readIdentity(file)
+}
+
+function peerBeamKey(fromWif, toPubkey, context) {
+  // Same derivation as BitBeam({from,to},{context}) in bitbeam v4
+  const { b4a, b32, bsv } = beamDeps()
+  const { PrivateKey, PublicKey, Hash } = bsv
+  const from = PrivateKey.fromWif(fromWif)
+  const to = PublicKey.fromString(toPubkey)
+  const sharedPoint = from.deriveSharedSecret(to)
+  const sharedSecret = b4a.from(sharedPoint.encode(true).slice(1))
+  const ctx = b4a.from(context || 'bitbeam')
+  const dhtKey = b4a.from(Hash.sha256(b4a.concat([sharedSecret, ctx])))
+  return b32.encode(dhtKey).replace(/=/g, '').toLowerCase()
+}
+
+function collectPeerPubkeys() {
+  let peers = args('--peer-pubkey').filter(Boolean)
+  for (const f of args('--peer-pubkey-file')) {
+    try {
+      const text = fs.readFileSync(f, 'utf8').trim()
+      if (!text) continue
+      try {
+        const data = JSON.parse(text)
+        if (Array.isArray(data)) peers.push(...data.map(String))
+        else if (data && data.pubkey) peers.push(String(data.pubkey))
+        else peers.push(...text.split(/\r?\n/).map(s => s.trim()).filter(Boolean))
+      } catch {
+        peers.push(...text.split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#')))
+      }
+    } catch (e) {
+      console.error('cannot read peer pubkey file:', f, e.message)
+    }
+  }
+  // de-dup
+  return [...new Set(peers.map(s => String(s).trim()).filter(Boolean))]
 }
 
 // Minimal multiplexing over a duplex stream (bitbeam/DHT connection).
@@ -203,8 +253,49 @@ async function tunnelServer() {
   const topic = arg('--topic', 'diloco')
   const targetHost = arg('--target-host', '127.0.0.1')
   const targetPort = Number(arg('--target-port', '0'))
+  const identityFile = arg('--identity')
+  const context = arg('--context', topic)
   if (!targetPort) throw new Error('--target-port is required')
 
+  // Identity mode: listen for per-pair ECDH beams from known peer pubkeys
+  if (identityFile) {
+    const id = loadIdentityFile(identityFile)
+    if (!id.wif) throw new Error('identity file must include wif for tunnel server')
+    const peers = collectPeerPubkeys()
+    if (!peers.length) throw new Error('identity tunnel-server requires --peer-pubkey or --peer-pubkey-file')
+
+    const node = new DHT({ ephemeral: true })
+    await node.ready()
+    const listeners = []
+    for (const peerPub of peers) {
+      const key = peerBeamKey(id.wif, peerPub, context)
+      const keyPair = DHT.keyPair(BitBeam.fromBase32(key))
+      const server = node.createServer({
+        firewall (remotePublicKey) {
+          return !remotePublicKey.equals(keyPair.publicKey)
+        }
+      })
+      server.on('connection', (conn) => {
+        let mux
+        mux = createMux(conn, (sid) => {
+          const target = net.connect(targetPort, targetHost)
+          try { target.setNoDelay(true) } catch {}
+          mux.bindRemote(sid, target)
+          target.on('error', (e) => console.error('tunnel-server-id target error', e.message))
+        })
+        console.log(JSON.stringify({ event: 'peer-connected', mode: 'tunnel-server-id', peer: peerPub }))
+        conn.on('error', (e) => console.error('tunnel-server-id peer error', e.message))
+        conn.on('close', () => console.log(JSON.stringify({ event: 'peer-disconnected', mode: 'tunnel-server-id', peer: peerPub })))
+      })
+      await server.listen(keyPair)
+      listeners.push({ peer: peerPub, key })
+    }
+    console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server-id', topic, context, transport: 'bitbeam-identity', target: `${targetHost}:${targetPort}`, peers: listeners.length, coordinator_pubkey: id.pubkey }))
+    await new Promise(() => {})
+    return
+  }
+
+  // Topic/passphrase mode (legacy/shared)
   const key = topicToBeamKey(topic)
   const keyPair = DHT.keyPair(BitBeam.fromBase32(key))
   const node = new DHT({ ephemeral: true })
@@ -236,24 +327,48 @@ async function tunnelClient() {
   const topic = arg('--topic', 'diloco')
   const listenHost = arg('--listen-host', '127.0.0.1')
   const listenPort = Number(arg('--listen-port', '0'))
+  const identityFile = arg('--identity')
+  const peerPubkey = arg('--peer-pubkey')
+  const context = arg('--context', topic)
   if (!listenPort) throw new Error('--listen-port is required')
 
-  const key = topicToBeamKey(topic)
-  console.log(JSON.stringify({ event: 'connecting', mode: 'tunnel-client', topic, key, transport: 'bitbeam' }))
+  let beam
+  let mode = 'tunnel-client'
+  let transport = 'bitbeam'
+  let info = { topic }
 
-  const beam = new BitBeam(key, { announce: false })
+  if (identityFile || peerPubkey) {
+    if (!identityFile) throw new Error('--identity required for identity tunnel-client')
+    if (!peerPubkey) throw new Error('--peer-pubkey (coordinator pubkey) required for identity tunnel-client')
+    const id = loadIdentityFile(identityFile)
+    if (!id.wif) throw new Error('identity file must include wif for tunnel client')
+    const { PrivateKey, PublicKey } = beamDeps().bsv
+    const from = PrivateKey.fromWif(id.wif)
+    const to = PublicKey.fromString(peerPubkey)
+    mode = 'tunnel-client-id'
+    transport = 'bitbeam-identity'
+    info = { topic, context, coordinator_pubkey: peerPubkey, node_pubkey: id.pubkey }
+    console.log(JSON.stringify({ event: 'connecting', mode, ...info, transport }))
+    beam = new BitBeam({ from, to }, { announce: false, context })
+  } else {
+    const key = topicToBeamKey(topic)
+    info = { topic, key }
+    console.log(JSON.stringify({ event: 'connecting', mode, ...info, transport }))
+    beam = new BitBeam(key, { announce: false })
+  }
+
   await new Promise((resolve, reject) => {
     const onErr = (e) => { cleanup(); reject(e) }
     const onConn = () => { cleanup(); resolve() }
     const cleanup = () => { beam.off('connected', onConn); beam.off('error', onErr) }
     beam.once('connected', onConn)
     beam.once('error', onErr)
-    beam.resume() // trigger _open in streamx/duplex implementations
+    try { beam.resume() } catch {} // trigger _open in streamx/duplex implementations
   })
 
   const mux = createMux(beam, null)
-  beam.on('error', (e) => console.error('tunnel-client beam error', e.message))
-  beam.on('close', () => console.error('tunnel-client beam closed'))
+  beam.on('error', (e) => console.error(`${mode} beam error`, e.message))
+  beam.on('close', () => console.error(`${mode} beam closed`))
 
   const server = net.createServer((socket) => {
     try { socket.setNoDelay(true) } catch {}
@@ -261,7 +376,7 @@ async function tunnelClient() {
   })
   await new Promise((resolve, reject) => {
     server.listen(listenPort, listenHost, () => {
-      console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-client', topic, key, transport: 'bitbeam', listen: `${listenHost}:${listenPort}` }))
+      console.log(JSON.stringify({ event: 'ready', mode, ...info, transport, listen: `${listenHost}:${listenPort}` }))
       resolve()
     })
     server.on('error', reject)
@@ -274,6 +389,6 @@ if (mode === 'announce') announce().catch((error) => { console.error(error); pro
 else if (mode === 'ledger') ledger().catch((error) => { console.error(error); process.exit(1) })
 else if (mode === 'share') share().catch((error) => { console.error(error); process.exit(1) })
 else if (mode === 'index') index().catch((error) => { console.error(error); process.exit(1) })
-else if (mode === 'tunnel-server') tunnelServer().catch((error) => { console.error(error); process.exit(1) })
-else if (mode === 'tunnel-client') tunnelClient().catch((error) => { console.error(error); process.exit(1) })
+else if (mode === 'tunnel-server' || mode === 'tunnel-server-id') tunnelServer().catch((error) => { console.error(error); process.exit(1) })
+else if (mode === 'tunnel-client' || mode === 'tunnel-client-id') tunnelClient().catch((error) => { console.error(error); process.exit(1) })
 else { console.error(`unknown mode: ${mode}`); process.exit(2) }

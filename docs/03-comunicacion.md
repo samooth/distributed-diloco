@@ -362,19 +362,22 @@ descubrimiento/conexión DHT.
     como transporte cifrado.
   - **Multiplexado persistente**: una conexión P2P por worker transporta
     múltiples substreams TCP (frames `[streamId, flags, len, payload]`), evitando
-    un lookup DHT por request HTTP (causa común de latencia/truncados).
+    un lookup DHT por request HTTP.
+  - **Modo identidad por par (MVP)**: con `--identity` + `--peer-pubkey(s)` +
+    `--context`, deriva canales `BitBeam({from,to}, {context})` (ECDH BSV).
+    Coordinador escucha un listener por peer conocido; worker conecta al pubkey
+    del coordinador. Fallback a topic compartido si no hay identidad/peers.
   - Requiere `npm install` en `network/holepunch-sidecar`.
-- `diloco/holepunch.py`: lanza el sidecar y espera `ready`.
+- `diloco/holepunch.py`: lanza el sidecar y espera `ready` (pasa args de identidad).
 - `scripts/run_coordinator.py` / `scripts/run_worker.py`: integran
-  `--p2p-topic`, `--tunnel-listen-host/port`, `--announce-topic`.
+  `--p2p-topic`, identidad de túnel, `--print-invite`/`--invite`.
 
 ### Fiabilidad y bootstrap
 
 - `GET /v1/state` puede ser grande (adaptador inicial). Para evitar truncados
   sobre redes inestables:
   - worker usa **bootstrap local** con `--init-state` si
-    `state_hash/base_hash/config_hash` coincide (consulta `GET /v1/state_meta`,
-    pequeño);
+    `state_hash/base_hash/config_hash` coincide (consulta `GET /v1/state_meta`);
   - worker reintenta requests seguras ante `IncompleteRead`/desconexiones.
 - Para pilotos iniciales, el camino más determinista es transporte directo
   (LAN/Tailscale/TLS) o init-state local equivalente en cada nodo.
@@ -382,28 +385,33 @@ descubrimiento/conexión DHT.
 ### Seguridad e identidad
 
 - Cifrado de transporte: provisto por bitbeam/DHT (Noise). **No sustituye** la
-  autenticación de aplicación (`X-DiLoCo-Token`, TLS/mTLS opcional).
-- Identidad por nodo (roadmap): usar claves BSV vía `@bsv/sdk` y
-  `BitBeam({from,to,context})` para canales por par, más allowlist y
-  firma/verificación de registros/deltas/manifiestos en el protocolo DiLoCo.
+  autenticación/autorización de aplicación (`X-DiLoCo-Token`, TLS/mTLS opcional).
+- **Identidad BSV (`@bsv/sdk`)**:
+  - Keygen: `scripts/identity_init.py`, sidecar `identity.js` (sign/verify ECDSA).
+  - Admisión: `node_pubkey` en registro + allowlist (`--allow-pubkey*`,
+    `--require-node-identity`).
+  - Firma/verificación (MVP): registro y metadatos de update (`diloco/identity.py`
+    usa sidecar para firmar/verificar).
+  - Invite firmado (`--print-invite`/`--invite`) con pubkey del coordinador,
+    topic/context, hashes y expiración.
 
 ### Limitaciones
 
 - Depende de DHT/NAT; algunos entornos pueden requerir más tiempo o fallar.
-- Validación E2E multi-máquina/NAT real del nuevo túnel bitbeam+MUX: pendiente.
-- Navegador: no se conecta directo al DHT; usar dashboard contra coordinador
-  directo o túnel local HTTP.
+- Validación E2E multi-máquina/NAT real del túnel bitbeam+MUX (topic e identidad): pendiente.
+- Modo identidad por par requiere peers/allowlist conocidos al iniciar el coordinador (sin descubrimiento dinámico completo aún).
+- Reconexión automática del beam y descarga chunked/reanudable de estado: pendientes.
+- Navegador: no se conecta directo al DHT; usar dashboard contra coordinador directo o túnel local HTTP.
 
 ### Ejemplo
 
 ```bash
-# Coordinador (reiniciar si cambió sidecar/index.js)
-./coordinator --config configs/local-qwen3-4b-2nodes.json \
-  --checkpoint-dir runs/qwen3-4b-2nodes --max-rounds 3 --no-wait \
-  --p2p-topic diloco-run-4b
+# Coordinador (túnel por par + invite)
+./coordinator --config <local>.json --coordinator-identity runs/identity/coordinator.json \
+  --allow-pubkey-file runs/identity/node-0.json --require-node-identity \
+  --p2p-topic diloco-run-4b --print-invite runs/invite.json --max-rounds 3 --no-wait
 
-# Worker
-./worker --config configs/local-qwen3-4b-2nodes.json \
-  --node-id node-1 --shard-id 1 \
-  --p2p-topic diloco-run-4b --tunnel-listen-port 18080 --device cuda
+# Worker (join por invite)
+./worker --config <local>.json --node-id node-0 --shard-id 0 --device cuda \
+  --node-identity runs/identity/node-0.json --invite runs/invite.json
 ```

@@ -35,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sidecar-name", default="coordinator")
     parser.add_argument("--p2p-topic", help="Hyperswarm topic used to tunnel coordinator traffic")
     parser.add_argument("--p2p-target-host", default="127.0.0.1")
+    parser.add_argument("--p2p-context", default="", help="bitbeam context for identity tunnels (default: run_id)")
+    parser.add_argument("--coordinator-identity", default="", help="path to coordinator BSV identity JSON; enables per-pair bitbeam tunnels when used with --p2p-topic")
     parser.add_argument("--tls-cert", default="")
     parser.add_argument("--tls-key", default="")
     parser.add_argument("--tls-client-ca", default="")
@@ -42,8 +44,45 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-pubkey", action="append", default=[], help="allowed worker BSV pubkey (repeatable)")
     parser.add_argument("--allow-pubkey-file", action="append", default=[], help="file with allowed pubkeys (one per line or JSON list)")
     parser.add_argument("--require-node-identity", action="store_true")
+    parser.add_argument("--print-invite", default="", help="write a signed join invite JSON to this path and exit after startup info is ready")
     parser.add_argument("--log-level", default="INFO")
     return parser
+
+
+def _build_invite(cfg, coordinator, port: int, args, coord_identity: str, p2p_context: str) -> dict:
+    import time as _time
+    from diloco.identity import canonical_invite, get_pubkey, sign_message
+
+    coord_pubkey = ""
+    if coord_identity:
+        try:
+            coord_pubkey = get_pubkey(coord_identity)
+        except Exception:
+            coord_pubkey = ""
+    invite = {
+        "type": "diloco-invite-v1",
+        "run_id": cfg.run_id,
+        "coordinator_pubkey": coord_pubkey,
+        "topic": (args.p2p_topic or ""),
+        "context": p2p_context or cfg.run_id,
+        "config_hash": cfg.fingerprint(),
+        "base_hash": str(getattr(coordinator, "base_hash", "") or ""),
+        "transport": cfg.coordinator.transport,
+        "endpoint": f"http://{cfg.coordinator.host}:{port}",
+        "expires_at": int(_time.time()) + 24 * 3600,
+        "allowed_node_pubkeys": list(cfg.coordinator.allowed_node_pubkeys or []),
+        "require_node_identity": bool(cfg.coordinator.require_node_identity),
+    }
+    if coord_identity and coord_pubkey:
+        try:
+            msg = canonical_invite(invite)
+            sig = sign_message(coord_identity, msg)
+            invite["sig"] = sig.get("sig", "")
+            invite["sig_alg"] = sig.get("alg", "")
+            invite["signed_by"] = coord_pubkey
+        except Exception:
+            pass
+    return invite
 
 
 def main() -> int:
@@ -153,6 +192,15 @@ def main() -> int:
     port = coordinator.start()
     print(f"PORT={port}", flush=True)
     print(f"COORDINATOR_URL=http://{cfg.coordinator.host}:{port}", flush=True)
+
+    coord_identity = (args.coordinator_identity or "").strip()
+    if coord_identity:
+        ip = Path(coord_identity)
+        if not ip.is_absolute():
+            ip = (PROJECT_ROOT / ip).resolve()
+        coord_identity = str(ip)
+    p2p_context = (args.p2p_context or cfg.run_id or (args.p2p_topic or "")).strip()
+
     sidecars = []
     if args.announce_topic:
         sidecar = HolepunchSidecar(
@@ -166,17 +214,53 @@ def main() -> int:
         sidecars.append(sidecar)
         logging.info("announcing coordinator on Hyperswarm topic %s", args.announce_topic)
     if args.p2p_topic:
-        tunnel = HolepunchSidecar(
-            mode="tunnel-server",
-            topic=args.p2p_topic,
-            name=args.sidecar_name,
-            target_host=args.p2p_target_host,
-            target_port=port,
-        )
-        tunnel.start()
-        tunnel.wait_for_ready()
-        sidecars.append(tunnel)
-        logging.info("coordinator available through Hyperswarm topic %s", args.p2p_topic)
+        peer_pubkeys = list(cfg.coordinator.allowed_node_pubkeys or [])
+        if coord_identity and peer_pubkeys:
+            tunnel = HolepunchSidecar(
+                mode="tunnel-server",
+                topic=args.p2p_topic,
+                name=args.sidecar_name,
+                target_host=args.p2p_target_host,
+                target_port=port,
+                identity=coord_identity,
+                peer_pubkeys=peer_pubkeys,
+                context=p2p_context,
+            )
+            tunnel.start()
+            tunnel.wait_for_ready()
+            sidecars.append(tunnel)
+            logging.info("coordinator available through identity bitbeam tunnel (%s peers, context=%s)", len(peer_pubkeys), p2p_context)
+        else:
+            if coord_identity and not peer_pubkeys:
+                logging.warning("--coordinator-identity set but no allowed peer pubkeys; falling back to topic tunnel")
+            tunnel = HolepunchSidecar(
+                mode="tunnel-server",
+                topic=args.p2p_topic,
+                name=args.sidecar_name,
+                target_host=args.p2p_target_host,
+                target_port=port,
+            )
+            tunnel.start()
+            tunnel.wait_for_ready()
+            sidecars.append(tunnel)
+            logging.info("coordinator available through Hyperswarm topic %s", args.p2p_topic)
+
+    if args.print_invite:
+        try:
+            invite = _build_invite(cfg, coordinator, port, args, coord_identity, p2p_context)
+            out = args.print_invite
+            text = json.dumps(invite, indent=2, sort_keys=True)
+            if out == "-":
+                print(text, flush=True)
+            else:
+                out_path = Path(out)
+                if not out_path.is_absolute():
+                    out_path = (PROJECT_ROOT / out_path).resolve()
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(text + "\n", encoding="utf-8")
+                logging.info("invite written to %s", out_path)
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("failed to generate invite: %s", exc)
     if args.no_wait:
         try:
             while True:
