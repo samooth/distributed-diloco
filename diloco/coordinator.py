@@ -248,6 +248,7 @@ class Coordinator:
                             node_id=str(payload.get("node_id", "")),
                             config_hash=str(payload.get("config_hash", "")),
                             base_hash=str(payload.get("base_hash", "")),
+                            node_pubkey=str(payload.get("node_pubkey", "") or ""),
                         )
                         self._send_json(200, result)
                         return
@@ -395,7 +396,7 @@ class Coordinator:
             "registered": sorted(self.registered),
         }
 
-    def register(self, node_id: str, config_hash: str, base_hash: str) -> Dict[str, Any]:
+    def register(self, node_id: str, config_hash: str, base_hash: str, node_pubkey: str = "") -> Dict[str, Any]:
         if not node_id or len(node_id) > 128:
             raise ApiError(400, "node_id must be 1-128 characters")
         expected = self.config.fingerprint()
@@ -403,6 +404,12 @@ class Coordinator:
             raise ApiError(409, "config fingerprint mismatch")
         if not hmac.compare_digest(str(base_hash), self.base_hash):
             raise ApiError(409, "base model fingerprint mismatch")
+        node_pubkey = str(node_pubkey or "").strip()
+        allowed = tuple(self.config.coordinator.allowed_node_pubkeys or ())
+        if self.config.coordinator.require_node_identity and not node_pubkey:
+            raise ApiError(403, "node identity is required")
+        if allowed and node_pubkey not in allowed:
+            raise ApiError(403, "node pubkey is not allowed")
         with self.cond:
             self._evict_stale_locked()
             if self.failure:
@@ -410,7 +417,13 @@ class Coordinator:
             if self.finished:
                 raise ApiError(410, "run is already finished")
             if node_id in self.registered:
-                self.registered[node_id]["last_seen"] = time.time()
+                existing = self.registered[node_id]
+                existing_pub = str(existing.get("node_pubkey", "") or "")
+                if existing_pub and node_pubkey and existing_pub != node_pubkey:
+                    raise ApiError(403, "node identity mismatch for rejoin")
+                if node_pubkey and not existing_pub:
+                    existing["node_pubkey"] = node_pubkey
+                existing["last_seen"] = time.time()
                 self.known_nodes.add(node_id)
                 info = self._registration_locked()
                 info["node_id"] = node_id
@@ -425,12 +438,13 @@ class Coordinator:
             self.registered[node_id] = {
                 "registered_at": time.time(),
                 "last_seen": time.time(),
+                "node_pubkey": node_pubkey,
             }
             self.known_nodes.add(node_id)
             self.last_activity = time.time()
             info = self._registration_locked()
             info["node_id"] = node_id
-            LOG.info("registered %s (%s/%s)", node_id, len(self.registered), self.config.coordinator.max_workers)
+            LOG.info("registered %s (%s/%s)%s", node_id, len(self.registered), self.config.coordinator.max_workers, " [identity]" if node_pubkey else "")
             self.cond.notify_all()
             return info
 

@@ -49,6 +49,7 @@ class Worker:
         log_path: Optional[str] = None,
         grpc_target: Optional[str] = None,
         init_state_path: Optional[str] = None,
+        node_identity_path: Optional[str] = None,
     ) -> None:
         self.config = config
         self.node_id = str(node_id)
@@ -56,6 +57,8 @@ class Worker:
         self.backend = backend
         self.grpc_target = grpc_target
         self.init_state_path = Path(init_state_path) if init_state_path else None
+        self.node_identity_path = Path(node_identity_path) if node_identity_path else None
+        self.node_identity: Optional[Dict[str, Any]] = self._load_identity(self.node_identity_path)
         self._grpc: Optional[GrpcWorkerClient] = None
         self.log_path = Path(log_path) if log_path else None
         if self.log_path is not None:
@@ -66,6 +69,19 @@ class Worker:
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._residual: Optional[Dict[str, torch.Tensor]] = None
+
+    @staticmethod
+    def _load_identity(path: Optional[Path]) -> Optional[Dict[str, Any]]:
+        if path is None:
+            return None
+        path = path.expanduser().resolve()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise CoordinatorError(0, f"cannot load node identity {path}: {exc}") from exc
+        if not isinstance(data, dict) or not str(data.get("pubkey", "")).strip():
+            raise CoordinatorError(0, f"invalid node identity file: {path}")
+        return data
 
     def _headers(self) -> Dict[str, str]:
         token = self.config.coordinator.token
@@ -173,20 +189,31 @@ class Worker:
         raise CoordinatorError(0, f"request failed after {attempts} attempts: {last_exc}") from last_exc
 
     def register(self) -> Dict[str, Any]:
+        pubkey = str((self.node_identity or {}).get("pubkey", "")).strip()
         client = self._get_grpc_client()
         if client is not None:
-            return client.register(
-                node_id=self.node_id,
-                config_hash=self.config.fingerprint(),
-                base_hash=self.backend.base_fingerprint(),
-            )
-        body = json.dumps(
-            {
-                "node_id": self.node_id,
-                "config_hash": self.config.fingerprint(),
-                "base_hash": self.backend.base_fingerprint(),
-            }
-        ).encode("utf-8")
+            try:
+                return client.register(
+                    node_id=self.node_id,
+                    config_hash=self.config.fingerprint(),
+                    base_hash=self.backend.base_fingerprint(),
+                    node_pubkey=pubkey,
+                )
+            except TypeError:
+                # Backward compat with older gRPC clients
+                return client.register(
+                    node_id=self.node_id,
+                    config_hash=self.config.fingerprint(),
+                    base_hash=self.backend.base_fingerprint(),
+                )
+        body_dict = {
+            "node_id": self.node_id,
+            "config_hash": self.config.fingerprint(),
+            "base_hash": self.backend.base_fingerprint(),
+        }
+        if pubkey:
+            body_dict["node_pubkey"] = pubkey
+        body = json.dumps(body_dict).encode("utf-8")
         status, raw, _ = self._request("POST", "/v1/register", body)
         payload = json.loads(raw.decode("utf-8"))
         if status != 200 or not payload.get("ok"):

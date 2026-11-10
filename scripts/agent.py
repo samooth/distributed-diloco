@@ -136,6 +136,7 @@ class Handler(BaseHTTPRequestHandler):
             topic = payload.get("p2p_topic")
             tunnel_port = payload.get("tunnel_listen_port", 0)
             init_state = payload.get("init_state", "")
+            node_identity = payload.get("node_identity", "")
             cmd = [PYTHON, "scripts/run_worker.py", "--config", config,
                    "--node-id", node_id, "--shard-id", str(shard_id), "--device", device]
             if coordinator:
@@ -146,6 +147,8 @@ class Handler(BaseHTTPRequestHandler):
                 cmd += ["--tunnel-listen-port", str(tunnel_port)]
             if init_state:
                 cmd += ["--init-state", init_state]
+            if node_identity:
+                cmd += ["--node-identity", node_identity]
             log_path = PROJECT_ROOT / "runs" / "agent" / f"{node_id}-{int(time.time())}.log"
             pid = _launch(cmd, log_path)
             self._send(200, {"id": pid, "cmd": cmd})

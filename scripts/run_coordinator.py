@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tls-key", default="")
     parser.add_argument("--tls-client-ca", default="")
     parser.add_argument("--tls-require-client-cert", action="store_true")
+    parser.add_argument("--allow-pubkey", action="append", default=[], help="allowed worker BSV pubkey (repeatable)")
+    parser.add_argument("--allow-pubkey-file", action="append", default=[], help="file with allowed pubkeys (one per line or JSON list)")
+    parser.add_argument("--require-node-identity", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -66,6 +69,37 @@ def main() -> int:
         coordinator_cfg = replace(coordinator_cfg, tls_client_ca=args.tls_client_ca)
     if args.tls_require_client_cert:
         coordinator_cfg = replace(coordinator_cfg, tls_require_client_cert=True)
+
+    allowed = list(coordinator_cfg.allowed_node_pubkeys or [])
+    allowed.extend([str(x).strip() for x in (args.allow_pubkey or []) if str(x).strip()])
+    for p in (args.allow_pubkey_file or []):
+        path = Path(p)
+        if not path.is_absolute():
+            path = (PROJECT_ROOT / path).resolve()
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            continue
+        try:
+            data = json.loads(text)
+            if isinstance(data, list):
+                allowed.extend([str(x).strip() for x in data if str(x).strip()])
+            elif isinstance(data, dict) and data.get("pubkey"):
+                allowed.append(str(data["pubkey"]).strip())
+            else:
+                allowed.extend([line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")])
+        except json.JSONDecodeError:
+            allowed.extend([line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")])
+    # de-dup preserve order
+    seen = set()
+    deduped = []
+    for k in allowed:
+        if k and k not in seen:
+            seen.add(k)
+            deduped.append(k)
+    if deduped:
+        coordinator_cfg = replace(coordinator_cfg, allowed_node_pubkeys=tuple(deduped))
+    if args.require_node_identity:
+        coordinator_cfg = replace(coordinator_cfg, require_node_identity=True)
     cfg = replace(cfg, coordinator=coordinator_cfg)
 
     checkpoint_dir = Path(cfg.coordinator.checkpoint_dir)

@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log", default="")
     parser.add_argument("--grpc-target", help="host:port for transport='grpc'")
     parser.add_argument("--init-state", default="", help="local adapter bundle from export_initial_state.py; skips downloading global state when hash matches")
+    parser.add_argument("--node-identity", default="", help="path to BSV identity JSON (pubkey/wif)")
     parser.add_argument("--tls-cert", default="")
     parser.add_argument("--tls-key", default="")
     parser.add_argument("--tls-client-ca", default="")
@@ -109,7 +110,22 @@ def main() -> int:
         if not init_path.is_absolute():
             init_path = (PROJECT_ROOT / init_path).resolve()
         init_state = str(init_path)
-    worker = Worker(cfg, args.node_id, coordinator_url, backend, log_path=str(log_path), grpc_target=grpc_target, init_state_path=(init_state and init_state != "auto") and init_state or None)
+    node_identity = (args.node_identity or "").strip()
+    if node_identity:
+        ip = Path(node_identity)
+        if not ip.is_absolute():
+            ip = (PROJECT_ROOT / ip).resolve()
+        node_identity = str(ip)
+    worker = Worker(
+        cfg,
+        args.node_id,
+        coordinator_url,
+        backend,
+        log_path=str(log_path),
+        grpc_target=grpc_target,
+        init_state_path=(init_state and init_state != "auto") and init_state or None,
+        node_identity_path=node_identity or None,
+    )
     try:
         summary = worker.run()
     finally:

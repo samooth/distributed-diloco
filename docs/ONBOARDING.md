@@ -37,16 +37,26 @@ cp configs/qwen3-4b-2nodes.json configs/local/qwen3-4b-2nodes.json  # o configs/
 ```
 Edita `model.name_or_path`, `data.path`/`data.eval_path`, `coordinator.token`, etc. Requisito HF: `data.num_shards >= coordinator.max_workers`.
 
-## 5. Identidad BSV + bitbeam (diseño/uso)
+## 5. Identidad BSV + bitbeam
 Sigue el patrón de meshllm: **descubrimiento/atado al canal por claves**, no solo por un secreto compartido.
 
-- **Claves por nodo**: genera/gestiona una identidad BSV (WIF/privada) por máquina (fuera del repo, permisos restrictivos). Usa `@bsv/sdk` para claves/firmas.
-- **Canal autenticado**: `BitBeam({from: workerPriv, to: coordPub}, { context: runId })` deriva el secreto compartido por ECDH para ese par. El coordinador acepta solo pubkeys en allowlist.
-- **Autorización**: el coordinador mantiene una allowlist (`allowed_pubkeys`) firmada/configurada; los workers presentan su pubkey al registrarse y el coordinador rechaza desconocidos.
-- **Firma de mensajes**: firma `register`/`delta`/manifiestos con la clave del nodo y verifica con `@bsv/sdk`. (Integración incremental; ver roadmap.)
-- **Descubrimiento**: `--p2p-topic` derivado desde la identidad del coordinador (o topic firmado), o lista de endpoints/bootstrap desde un **invite/token firmado** por el coordinador (estilo meshllm). LAN: mDNS opcional; WAN: DHT/bitbeam.
+### Estado actual (MVP de admisión)
+- Genera identidades: `scripts/identity_init.py --name node-0` → `runs/identity/node-0.json` (pubkey + WIF local, 600).
+- Worker envía `node_pubkey` en `/v1/register` con `--node-identity runs/identity/node-0.json`.
+- Coordinador aplica allowlist/admisión: `--allow-pubkey <hex>`, `--allow-pubkey-file <file>` (líneas o JSON), `--require-node-identity`, o `coordinator.allowed_node_pubkeys` / `coordinator.require_node_identity` en config.
+- Si la pubkey no está permitida o falta cuando es requerida → `403`.
 
-> Hoy el túnel usa un topic compartido por simplicidad. El objetivo es migrar a **BSV + bitbeam por par** manteniendo la UX tipo meshllm (un comando/flag para unirse).
+Ejemplo:
+```bash
+./coordinator --config <local>.json --allow-pubkey-file runs/identity/node-0.json --allow-pubkey-file runs/identity/node-1.json --require-node-identity --p2p-topic diloco-run-4b ...
+./worker --config <local>.json --node-id node-0 --node-identity runs/identity/node-0.json --p2p-topic diloco-run-4b ...
+```
+
+### Objetivo (siguientes pasos)
+- **Canal por par**: `BitBeam({from: workerPriv, to: coordPub}, { context: runId })` (ECDH) en vez de topic compartido.
+- **Firma/verificación** de `register`, deltas y manifiestos con `@bsv/sdk`.
+- **Invite firmado** por el coordinador (pubkey, bootstrap/topic, política, expiración) para unirse con un flag/comando.
+- LAN/mDNS opcional; WAN por DHT/bitbeam.
 
 ## 6. Estado inicial HF
 ```bash
