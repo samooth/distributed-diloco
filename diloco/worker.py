@@ -511,23 +511,60 @@ class Worker:
         LOG.info("%s bootstrapping from local init state (round %s, hash %s)", self.node_id, remote.get("round"), remote.get("state_hash"))
         return dict(remote), clone_state(state)
 
+    def _current_state_matches_meta(self, remote: Mapping[str, Any]) -> bool:
+        try:
+            if str(remote.get("base_hash", "")) != self.backend.base_fingerprint():
+                return False
+            if str(remote.get("config_hash", "")) != self.config.fingerprint():
+                return False
+            expected_state_hash = str(remote.get("state_hash", "") or "")
+            if not expected_state_hash:
+                return False
+            current = self.backend.state()
+            return hash_state(current) == expected_state_hash
+        except Exception:  # noqa: BLE001
+            return False
+
     def get_state(self, download: bool = False) -> tuple[Dict[str, Any], Dict[str, torch.Tensor]]:
         if not download:
             local = self._load_local_init_state()
             if local is not None:
                 return local
+
         client = self._get_grpc_client()
         if client is not None:
+            # If server exposes state_meta, reuse in-memory state when identical (idempotent)
+            if hasattr(client, "get_state_meta"):
+                try:
+                    remote = client.get_state_meta(self.node_id)
+                    if self._current_state_matches_meta(remote):
+                        state = self.backend.state()
+                        # remote may not include full adapter_meta; keep it best-effort
+                        return dict(remote), clone_state(state)
+                except Exception:  # noqa: BLE001
+                    pass
             raw = client.get_state(self.node_id)
             meta, state = unpack_message(raw)
             self._validate_state(meta, state)
             return meta, clone_state(state)
+
         # HTTP: try resumable/chunked download when blob metadata is available
         expected_meta: Optional[Dict[str, Any]] = None
         try:
             expected_meta = self.get_state_meta()
         except Exception as exc:  # noqa: BLE001
             LOG.debug("%s could not fetch state_meta before download: %s", self.node_id, exc)
+
+        # Idempotency: if current in-memory state already matches coordinator state, skip download
+        if expected_meta and self._current_state_matches_meta(expected_meta):
+            LOG.info(
+                "%s reusing in-memory state (round %s, hash %s)",
+                self.node_id,
+                expected_meta.get("round"),
+                expected_meta.get("state_hash"),
+            )
+            return dict(expected_meta), clone_state(self.backend.state())
+
         raw = self._download_state_blob_http(expected_meta)
         meta, state = unpack_message(raw)
         self._validate_state(meta, state)
