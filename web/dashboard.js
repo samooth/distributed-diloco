@@ -227,6 +227,14 @@ async function refresh() {
     drawSparkline("spark-loss", hist.map((r) => Number(r.train_loss)), "--accent");
     drawSparkline("spark-delta", hist.map((r) => Number(r.delta_norm)), "--accent-2");
 
+    // run/meta info
+    const short = (s, n = 8) => (s ? String(s).slice(0, n) : "—");
+    const metaParts = [`${hist.length} rondas`];
+    if (status.run_id) metaParts.push(`run ${status.run_id}`);
+    if (status.config_hash) metaParts.push(`cfg ${short(status.config_hash, 10)}`);
+    if (status.base_hash) metaParts.push(`base ${short(status.base_hash, 8)}`);
+    $("chart-meta").textContent = metaParts.join(" · ");
+
     // nodes empty state
     if (status.registered.length === 0) {
       const tr = document.createElement("tr");
