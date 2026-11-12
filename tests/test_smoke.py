@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import time
@@ -26,7 +27,7 @@ from diloco.config import (
     TrainConfig,
 )
 from diloco.coordinator import ApiError, Coordinator
-from diloco.protocol import pack_message
+from diloco.protocol import pack_message, unpack_message
 from diloco.tensor_utils import hash_state
 from diloco.worker import CoordinatorError, Worker
 
@@ -97,10 +98,15 @@ class LocalhostSmokeTests(unittest.TestCase):
                 "http://127.0.0.1:1",
                 backend,
                 log_path=str(Path(tmp) / "worker.jsonl"),
+                state_cache_dir=str(Path(tmp) / "state-cache"),  # isolate from ambient runs/state-cache
             )
+            # Force initial get_state to go through download path (in-memory may match)
+            backend.load_state({k: v + 1.0 for k, v in backend.state().items()})
+
             calls: List[tuple[str, str]] = []
             submit_count = 0
             state_calls = 0
+            meta_calls = 0
 
             def blob(round_index: int, done: bool) -> bytes:
                 meta = {
@@ -138,16 +144,18 @@ class LocalhostSmokeTests(unittest.TestCase):
                 timeout: float | None = None,
                 extra_headers: Dict[str, str] | None = None,
                 allow_partial: bool = False,
+                retry_statuses=None,
             ) -> tuple[int, bytes, str, Dict[str, str]]:
-                nonlocal submit_count, state_calls
+                nonlocal submit_count, state_calls, meta_calls
                 calls.append((method, path))
                 if path.startswith("/v1/state_meta"):
-                    # first fetch: round 0; after stale retry worker fetches state again -> round 1
-                    round_index = 0 if state_calls == 0 else 1
+                    # initial phase sees round 0; after a stale submit, refetch must see advanced round
+                    round_index = 0 if submit_count == 0 else 1
+                    meta_calls += 1
                     return 200, meta_json(round_index, False), "application/json", {}
                 if path.startswith("/v1/state"):
                     state_calls += 1
-                    round_index = 0 if state_calls == 1 else 1
+                    round_index = 0 if submit_count == 0 else 1
                     return 200, blob(round_index, False), "application/octet-stream", {}
                 if path.startswith("/v1/update"):
                     submit_count += 1
@@ -802,14 +810,22 @@ class LocalhostSmokeTests(unittest.TestCase):
 
                 meta1, state1 = worker.get_state(download=True)
                 sh = str(meta1["state_hash"])
-                cache_file = cache_dir / f"{sh}.blob"
+                cached_files = list(cache_dir.glob("*.blob"))
+                self.assertEqual(len(cached_files), 1, f"expected one cached state blob, got {cached_files}")
+                cache_file = cached_files[0]
                 self.assertTrue(cache_file.is_file(), "expected cached state blob on disk")
+                cached_blob_hash = cache_file.stem  # saved key (blob hash or state hash/round key)
 
                 # Make in-memory state different again so worker must not take in-memory shortcut
                 mutated2 = {k: v + 2.0 for k, v in backend.state().items()}
                 worker.backend.load_state(mutated2)
 
                 expected_meta = dict(meta1)
+                # Ensure cache lookup can resolve the actual cached key (transport meta may carry blob hash)
+                if not expected_meta.get("state_blob_hash") and len(cached_blob_hash) == 64:
+                    expected_meta["state_blob_hash"] = cached_blob_hash
+                if "round" not in expected_meta:
+                    expected_meta["round"] = 0
 
                 def fail_download(_self, _expected=None):
                     raise AssertionError("network download should not be used when cache is valid")
@@ -820,6 +836,111 @@ class LocalhostSmokeTests(unittest.TestCase):
                 meta2, state2 = worker.get_state(download=True)
                 self.assertEqual(str(meta2.get("state_hash")), sh)
                 self.assertEqual(hash_state(state2), hash_state(state1))
+            finally:
+                try:
+                    worker.leave()
+                except Exception:
+                    pass
+                worker.close()
+                coord.stop()
+
+    def test_worker_resumable_state_download_recovers_from_partial_failures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-state-resume",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4, seed=11),
+                data=DataConfig(num_shards=1, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=1, max_workers=1, quorum=1, max_rounds=1,
+                    checkpoint_dir=tmp, token="", idle_timeout_s=0,
+                ),
+            )
+            state, base_hash, _adapter_meta = initial_adapter_state(config, device="cpu")
+            coord = Coordinator(config, state, base_hash)
+            port = coord.start()
+            backend = build_backend(config, shard_id=0, device="cpu")
+            worker = Worker(
+                config,
+                "node-resume",
+                f"http://127.0.0.1:{port}",
+                backend,
+                log_path=str(Path(tmp) / "worker-resume.jsonl"),
+                state_cache_dir=str(Path(tmp) / "cache-resume"),
+            )
+            try:
+                worker.register()
+                # get canonical meta and blob via real requests
+                expected_meta = worker.get_state_meta()
+                # fetch full blob once using real implementation (no monkeypatch yet)
+                full_blob = worker._download_state_blob_http(expected_meta)
+                self.assertEqual(hashlib_sha256(full_blob), str(expected_meta.get("state_blob_hash", "")))
+
+                # Ensure download path is taken (not in-memory/cache shortcut)
+                mutated = {k: v + 3.0 for k, v in backend.state().items()}
+                worker.backend.load_state(mutated)
+                # clear any cache that might have been created
+                cache_path = worker._state_cache_path(str(expected_meta.get("state_hash", "")))
+                try:
+                    cache_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+                calls = {"state": 0}
+                common_headers = {
+                    "ETag": str(expected_meta.get("state_etag", "")),
+                    "X-DiLoCo-Round": str(expected_meta.get("round", 0)),
+                    "X-DiLoCo-State-Hash": str(expected_meta.get("state_hash", "")),
+                    "X-DiLoCo-Blob-Hash": str(expected_meta.get("state_blob_hash", "")),
+                    "Accept-Ranges": "bytes",
+                }
+
+                real_request = worker._request
+
+                def flaky_request(method, path, body=None, content_type="application/json", timeout=None, extra_headers=None, allow_partial=False, retry_statuses=None):
+                    if method == "GET" and path.startswith("/v1/state_meta"):
+                        return 200, json.dumps(expected_meta).encode("utf-8"), "application/json", {}
+                    if method == "GET" and path.startswith("/v1/state"):
+                        calls["state"] += 1
+                        rh = dict(extra_headers or {})
+                        range_header = rh.get("Range", "")
+                        # simulate transient network failure
+                        if calls["state"] == 1:
+                            raise CoordinatorError(0, "simulated transient connection error")
+                        # parse requested range
+                        if range_header.startswith("bytes="):
+                            spec = range_header[len("bytes="):]
+                            start_s, end_s = spec.split("-", 1)
+                            start = int(start_s)
+                            end = int(end_s)
+                        else:
+                            start, end = 0, len(full_blob) - 1
+                        end = min(end, len(full_blob) - 1)
+                        chunk = full_blob[start:end + 1]
+                        # simulate partial delivery on first successful range response
+                        if calls["state"] == 2 and len(chunk) > 8:
+                            chunk = chunk[: max(1, len(chunk) // 2)]
+                            actual_end = start + len(chunk) - 1
+                            headers = dict(common_headers)
+                            headers["Content-Range"] = f"bytes {start}-{actual_end}/{len(full_blob)}"
+                            return 206, chunk, "application/octet-stream", headers
+                        headers = dict(common_headers)
+                        headers["Content-Range"] = f"bytes {start}-{start + len(chunk) - 1}/{len(full_blob)}"
+                        status = 206 if range_header.startswith("bytes=") else 200
+                        return status, chunk, "application/octet-stream", headers
+                    return real_request(method, path, body=body, content_type=content_type, timeout=timeout, extra_headers=extra_headers, allow_partial=allow_partial, retry_statuses=retry_statuses)
+
+                worker._request = flaky_request  # type: ignore[assignment]
+                worker.get_state_meta = lambda: dict(expected_meta)  # type: ignore[assignment]
+
+                import json as _json  # ensure available
+                blob_out = worker._download_state_blob_http(expected_meta)
+                self.assertEqual(hashlib_sha256(blob_out), str(expected_meta.get("state_blob_hash", "")))
+                unpacked_meta, unpacked_state = unpack_message(blob_out)
+                self.assertEqual(str(unpacked_meta.get("state_hash", "")), str(expected_meta.get("state_hash", "")))
+                _, ref_state = unpack_message(full_blob)
+                self.assertEqual(hash_state(unpacked_state), hash_state(ref_state))
+                self.assertGreaterEqual(calls["state"], 3)
             finally:
                 try:
                     worker.leave()

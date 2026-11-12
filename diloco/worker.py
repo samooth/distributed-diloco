@@ -539,17 +539,36 @@ class Worker:
             "adapter_meta": status.get("adapter_meta", {}),
         }
 
-    def _state_cache_path(self, state_hash: str) -> Path:
-        safe = "".join(c for c in str(state_hash) if c.isalnum() or c in "-_")[:128] or "state"
+    def _state_cache_path(self, cache_key: str) -> Path:
+        safe = "".join(c for c in str(cache_key) if c.isalnum() or c in "-_")[:128] or "state"
         return self.state_cache_dir / f"{safe}.blob"
+
+    def _state_cache_key(self, expected_meta: Mapping[str, Any]) -> str:
+        # Prefer blob hash (exact content identity, includes packed metadata/round context)
+        blob_hash = str(expected_meta.get("state_blob_hash", "") or "")
+        if blob_hash:
+            return blob_hash
+        state_hash = str(expected_meta.get("state_hash", "") or "")
+        round_id = expected_meta.get("round", "")
+        if state_hash and round_id != "":
+            return f"{state_hash}-r{round_id}"
+        return state_hash
 
     def _load_cached_state_blob(self, expected_meta: Mapping[str, Any]) -> Optional[bytes]:
         state_hash = str(expected_meta.get("state_hash", "") or "")
         if not state_hash:
             return None
-        path = self._state_cache_path(state_hash)
-        if not path.is_file():
+        cache_key = self._state_cache_key(expected_meta)
+        if not cache_key:
             return None
+        path = self._state_cache_path(cache_key)
+        if not path.is_file():
+            # Legacy fallback: older cache keyed by state_hash only
+            legacy = self._state_cache_path(state_hash)
+            if legacy.is_file():
+                path = legacy
+            else:
+                return None
         try:
             blob = path.read_bytes()
         except Exception:  # noqa: BLE001
@@ -575,6 +594,11 @@ class Worker:
             return None
         if str(meta.get("state_hash", "")) != state_hash or hash_state(state) != state_hash:
             return None
+        # Ensure packed metadata matches expected round/step when provided (avoid stale same-hash blobs)
+        if "round" in expected_meta and str(meta.get("round", "")) != str(expected_meta.get("round", "")):
+            return None
+        if "global_step" in expected_meta and str(meta.get("global_step", "")) != str(expected_meta.get("global_step", "")):
+            return None
         chunk_hashes = list(expected_meta.get("state_blob_chunk_hashes") or [])
         chunk_size = int(expected_meta.get("state_blob_chunk_size", 0) or 0)
         if chunk_hashes and chunk_size > 0:
@@ -584,17 +608,20 @@ class Worker:
         LOG.info("%s loaded state from local cache (%s)", self.node_id, state_hash[:12])
         return blob
 
-    def _save_cached_state_blob(self, state_hash: str, blob: bytes) -> None:
+    def _save_cached_state_blob(self, state_hash: str, blob: bytes, blob_hash: str = "", round_id: Any = None) -> None:
         if not state_hash or not blob:
             return
+        cache_key = str(blob_hash or "").strip()
+        if not cache_key:
+            cache_key = state_hash if round_id is None or round_id == "" else f"{state_hash}-r{round_id}"
         try:
             self.state_cache_dir.mkdir(parents=True, exist_ok=True)
-            path = self._state_cache_path(state_hash)
+            path = self._state_cache_path(cache_key)
             tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
             tmp.write_bytes(blob)
             os.replace(tmp, path)
         except Exception as exc:  # noqa: BLE001
-            LOG.debug("%s could not save state cache (%s): %s", self.node_id, str(state_hash)[:12], exc)
+            LOG.debug("%s could not save state cache (%s): %s", self.node_id, str(cache_key)[:12], exc)
 
     def _load_local_init_state(self) -> Optional[tuple[Dict[str, Any], Dict[str, torch.Tensor]]]:
         if not self.init_state_path:
@@ -665,7 +692,7 @@ class Worker:
             self._validate_state(meta, state)
             state_hash = str(meta.get("state_hash", "") or "")
             if state_hash:
-                self._save_cached_state_blob(state_hash, raw)
+                self._save_cached_state_blob(state_hash, raw, str(meta.get("state_blob_hash", "") or hash_blob(raw)), meta.get("round"))
             return meta, clone_state(state)
 
         # HTTP: try resumable/chunked download when blob metadata is available
@@ -698,7 +725,8 @@ class Worker:
         self._validate_state(meta, state)
         state_hash = str(meta.get("state_hash", "") or "")
         if state_hash:
-            self._save_cached_state_blob(state_hash, raw)
+            blob_hash = str((expected_meta or {}).get("state_blob_hash", "") or "") or hash_blob(raw)
+            self._save_cached_state_blob(state_hash, raw, blob_hash, meta.get("round"))
         return meta, clone_state(state)
 
     def _validate_state(
