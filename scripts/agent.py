@@ -198,6 +198,7 @@ class Handler(BaseHTTPRequestHandler):
             topic = payload.get("p2p_topic")
             tunnel_port = payload.get("tunnel_listen_port", 0)
             init_state = payload.get("init_state", "")
+            state_cache_dir = payload.get("state_cache_dir", "")
             node_identity = payload.get("node_identity", "")
             coordinator_pubkey = payload.get("coordinator_pubkey", "")
             p2p_context = payload.get("p2p_context", "")
@@ -212,6 +213,8 @@ class Handler(BaseHTTPRequestHandler):
                 cmd += ["--tunnel-listen-port", str(tunnel_port)]
             if init_state:
                 cmd += ["--init-state", init_state]
+            if state_cache_dir:
+                cmd += ["--state-cache-dir", str(state_cache_dir)]
             if node_identity:
                 cmd += ["--node-identity", node_identity]
             if coordinator_pubkey:

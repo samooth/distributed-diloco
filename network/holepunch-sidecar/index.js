@@ -64,9 +64,9 @@ function peerBeamKey(fromWif, toPubkey, context) {
   return b32.encode(dhtKey).replace(/=/g, '').toLowerCase()
 }
 
-function collectPeerPubkeys() {
-  let peers = args('--peer-pubkey').filter(Boolean)
-  for (const f of args('--peer-pubkey-file')) {
+function readPeersFromFiles(files) {
+  let peers = []
+  for (const f of (files || [])) {
     try {
       const text = fs.readFileSync(f, 'utf8').trim()
       if (!text) continue
@@ -82,6 +82,12 @@ function collectPeerPubkeys() {
       console.error('cannot read peer pubkey file:', f, e.message)
     }
   }
+  return peers
+}
+
+function collectPeerPubkeys() {
+  let peers = args('--peer-pubkey').filter(Boolean)
+  peers.push(...readPeersFromFiles(args('--peer-pubkey-file')))
   // de-dup
   return [...new Set(peers.map(s => String(s).trim()).filter(Boolean))]
 }
@@ -261,36 +267,92 @@ async function tunnelServer() {
   if (identityFile) {
     const id = loadIdentityFile(identityFile)
     if (!id.wif) throw new Error('identity file must include wif for tunnel server')
-    const peers = collectPeerPubkeys()
-    if (!peers.length) throw new Error('identity tunnel-server requires --peer-pubkey or --peer-pubkey-file')
+    const peerFiles = args('--peer-pubkey-file')
+    let peers = collectPeerPubkeys()
+    if (!peers.length && peerFiles.length === 0) {
+      throw new Error('identity tunnel-server requires --peer-pubkey or --peer-pubkey-file')
+    }
 
     const node = new DHT({ ephemeral: true })
     await node.ready()
-    const listeners = []
-    for (const peerPub of peers) {
-      const key = peerBeamKey(id.wif, peerPub, context)
-      const keyPair = DHT.keyPair(BitBeam.fromBase32(key))
-      const server = node.createServer({
-        firewall (remotePublicKey) {
-          return !remotePublicKey.equals(keyPair.publicKey)
-        }
-      })
-      server.on('connection', (conn) => {
-        let mux
-        mux = createMux(conn, (sid) => {
-          const target = net.connect(targetPort, targetHost)
-          try { target.setNoDelay(true) } catch {}
-          mux.bindRemote(sid, target)
-          target.on('error', (e) => console.error('tunnel-server-id target error', e.message))
+    const listeners = new Map() // peerPub -> { key, server }
+
+    async function addPeerListener(peerPub) {
+      const p = String(peerPub || '').trim()
+      if (!p || listeners.has(p)) return false
+      try {
+        const key = peerBeamKey(id.wif, p, context)
+        const keyPair = DHT.keyPair(BitBeam.fromBase32(key))
+        const server = node.createServer({
+          firewall (remotePublicKey) {
+            return !remotePublicKey.equals(keyPair.publicKey)
+          }
         })
-        console.log(JSON.stringify({ event: 'peer-connected', mode: 'tunnel-server-id', peer: peerPub }))
-        conn.on('error', (e) => console.error('tunnel-server-id peer error', e.message))
-        conn.on('close', () => console.log(JSON.stringify({ event: 'peer-disconnected', mode: 'tunnel-server-id', peer: peerPub })))
-      })
-      await server.listen(keyPair)
-      listeners.push({ peer: peerPub, key })
+        server.on('connection', (conn) => {
+          let mux
+          mux = createMux(conn, (sid) => {
+            const target = net.connect(targetPort, targetHost)
+            try { target.setNoDelay(true) } catch {}
+            mux.bindRemote(sid, target)
+            target.on('error', (e) => console.error('tunnel-server-id target error', e.message))
+          })
+          console.log(JSON.stringify({ event: 'peer-connected', mode: 'tunnel-server-id', peer: p }))
+          conn.on('error', (e) => console.error('tunnel-server-id peer error', e.message))
+          conn.on('close', () => console.log(JSON.stringify({ event: 'peer-disconnected', mode: 'tunnel-server-id', peer: p })))
+        })
+        await server.listen(keyPair)
+        listeners.set(p, { key, server })
+        console.log(JSON.stringify({ event: 'peer-listener-added', mode: 'tunnel-server-id', peer: p }))
+        return true
+      } catch (e) {
+        console.error('tunnel-server-id failed to add peer listener', p, e && e.message ? e.message : e)
+        return false
+      }
     }
-    console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server-id', topic, context, transport: 'bitbeam-identity', target: `${targetHost}:${targetPort}`, peers: listeners.length, coordinator_pubkey: id.pubkey }))
+
+    for (const peerPub of peers) {
+      await addPeerListener(peerPub)
+    }
+
+    // If started with only peer files (allowlist not known yet), wait and allow dynamic late join
+    if (listeners.size === 0 && peerFiles.length > 0) {
+      console.log(JSON.stringify({ event: 'waiting-peers', mode: 'tunnel-server-id', topic, context, transport: 'bitbeam-identity', target: `${targetHost}:${targetPort}`, coordinator_pubkey: id.pubkey }))
+      // poll until at least one peer appears
+      while (listeners.size === 0) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const dynamic = readPeersFromFiles(peerFiles)
+        for (const p of dynamic) await addPeerListener(p)
+      }
+    } else if (listeners.size === 0) {
+      throw new Error('identity tunnel-server requires at least one valid peer pubkey')
+    }
+
+    console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server-id', topic, context, transport: 'bitbeam-identity', target: `${targetHost}:${targetPort}`, peers: listeners.size, coordinator_pubkey: id.pubkey }))
+
+    // Dynamic late-join: re-read peer pubkey files and add listeners for new peers
+    if (peerFiles.length > 0) {
+      (async () => {
+        while (true) {
+          await new Promise((r) => setTimeout(r, 5000))
+          try {
+            const dynamic = readPeersFromFiles(peerFiles)
+            let added = 0
+            for (const p of dynamic) {
+              if (!listeners.has(String(p || '').trim())) {
+                const ok = await addPeerListener(p)
+                if (ok) added++
+              }
+            }
+            if (added > 0) {
+              console.log(JSON.stringify({ event: 'peers-updated', mode: 'tunnel-server-id', peers: listeners.size, added }))
+            }
+          } catch (e) {
+            console.error('tunnel-server-id peer refresh error', e && e.message ? e.message : e)
+          }
+        }
+      })().catch((e) => console.error('tunnel-server-id watcher fatal', e && e.message ? e.message : e))
+    }
+
     await new Promise(() => {})
     return
   }

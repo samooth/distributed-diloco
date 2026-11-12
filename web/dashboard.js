@@ -411,7 +411,7 @@ if ($("agent-url")) {
 const LAUNCHER_STORAGE_KEY = "diloco-launcher-config-v1";
 const launcherFieldIds = [
   "lc-config","lc-device","lc-max-rounds","lc-init-state","lc-p2p-topic","lc-p2p-context","lc-coord-identity","lc-allow-pubkeys","lc-require-node-identity",
-  "lw-config","lw-device","lw-node-id","lw-shard-id","lw-coordinator","lw-p2p-topic","lw-tunnel-port","lw-init-state","lw-p2p-context","lw-node-identity","lw-coordinator-pubkey","lw-invite"
+  "lw-config","lw-device","lw-node-id","lw-shard-id","lw-coordinator","lw-p2p-topic","lw-tunnel-port","lw-init-state","lw-state-cache-dir","lw-p2p-context","lw-node-identity","lw-coordinator-pubkey","lw-invite"
 ];
 
 function loadLauncherConfig() {
@@ -544,6 +544,7 @@ function buildWorkerPayload() {
   const topic = getVal("lw-p2p-topic"); if (topic) payload.p2p_topic = topic;
   const tunnelPort = getNum("lw-tunnel-port", 0); if (tunnelPort > 0) payload.tunnel_listen_port = tunnelPort;
   const initState = getVal("lw-init-state"); if (initState) payload.init_state = initState;
+  const stateCacheDir = getVal("lw-state-cache-dir"); if (stateCacheDir) payload.state_cache_dir = stateCacheDir;
   const context = getVal("lw-p2p-context"); if (context) payload.p2p_context = context;
   const ident = getVal("lw-node-identity"); if (ident) payload.node_identity = ident;
   const coordPk = getVal("lw-coordinator-pubkey"); if (coordPk) payload.coordinator_pubkey = coordPk;

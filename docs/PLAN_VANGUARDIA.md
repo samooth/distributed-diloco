@@ -43,7 +43,7 @@ Objetivo: entrenamiento estable sobre internet real (NAT, cortes, latencia varia
 - [ ] **Compresión negociada**: `zstd`/codecs para bootstrap y deltas; medir bytes on-wire y `sync_fraction`.
 - [~] **Reconexión automática E2E**: worker con reintentos/backoff en submit (errores transitorios 0/502/503/504), recuperación de updates duplicados ambiguos, re-registro ante pérdida de sesión, espera idempotente de avance de ronda y **re-registro automático en heartbeat ante 403** (coordinador reiniciado/sesión perdida); sidecar `tunnel-client` bitbeam con reconexión automática/backoff manteniendo el listener local. Pendiente: validación E2E WAN/NAT completa, re-discovery dinámica, peers/late-join dinámico en túnel por identidad y hardening adicional bajo reinicios prolongados.
 - [ ] **Validación NAT/Internet**: E2E multi-máquina (topic y túnel por par), métricas de conexión (TTFB, reconexiones, fallos DHT), fallback coordinado.
-- [ ] **Túnel identidad dinámico**: alta/baja de peers y late join sin reiniciar coordinador (allowlist/sesiones en caliente).
+- [~] **Túnel identidad dinámico**: `tunnel-server-id` (bitbeam) soporta **alta/late join dinámica** de peers releyendo `--peer-pubkey-file` periódicamente y añadiendo listeners DHT para nuevos pubkeys sin reiniciar; pendiente baja/revocación en caliente, integración automática con allowlist del coordinador y validación E2E NAT.
 - [ ] **Manejo de stragglers**: timeouts adaptativos, políticas de quorum/parcialidad seguras, reporting claro.
 - [ ] **Suite de resiliencia**: pruebas con `tc netem` (latencia/jitter/pérdida/ancho de banda) y churn inducido.
 
@@ -135,4 +135,5 @@ Objetivo: convertir la red en infraestructura colaborativa verificable.
 - 2026-11-12 (web/deploy): página HTML `503.html` (auto-retry) publicada en `/var/www/didiloco` y plantillas nginx actualizadas para mostrar fallback HTML en 502/503/504 durante reinicios de contenedores/proxy (dashboard) manteniendo JSON en `/api/status`. Nota: aplicar confs nginx en VPS requiere instalar en `user_conf.d` y recargar nginx.
 - 2026-11-13 (P2.1, WAN): cache persistente local de blobs de estado por `state_hash` en worker (`runs/state-cache` / `--state-cache-dir`) para evitar re-descargas tras reinicios, con verificación de manifiesto/hash; prueba `test_worker_persistent_state_cache`; tests 42 OK.
 - 2026-11-13 (P2.2, robustez): worker intenta re-registro automático en heartbeat ante 403 (recuperación tras reinicio/pérdida de registro del coordinador); tests 42 OK.
+- 2026-11-13 (P2.2, transporte): `tunnel-server-id` añade listeners dinámicamente para nuevos peers desde `--peer-pubkey-file` (late join sin reinicio); dashboard/agent soportan `--state-cache-dir` en launcher worker. Deploy con rebuild.
 - 2026-11-12 (infra reciente): `/v1/public/status`, deploy `didiloco.bsv.direct` (`/var/www/didiloco`, `proxy-net`), auth HTTP Basic/token en dashboard/agente, fixes de deploy y runtime Docker (numpy).
