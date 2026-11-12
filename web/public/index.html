@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ddiloco.bsv.direct — DiLoCo WAN Network Status</title>
+  <meta name="description" content="Estado público de la red DiLoCo WAN en ddiloco.bsv.direct" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg2: #111832;
+      --card: rgba(18, 26, 48, 0.72);
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #e6edf7;
+      --muted: #9fb0d0;
+      --accent: #6ee7ff;
+      --accent2: #8b5cf6;
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --bad: #fb7185;
+      --shadow: 0 20px 60px rgba(0,0,0,.35);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 10% -10%, rgba(110,231,255,.18), transparent 60%),
+        radial-gradient(800px 500px at 100% 0%, rgba(139,92,246,.18), transparent 55%),
+        linear-gradient(180deg, #0b1020 0%, #0a0f1d 100%);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom: 28px; }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .mark { width:40px; height:40px; border-radius:12px; display:grid; place-items:center; font-weight:800; color:#041018;
+      background: linear-gradient(135deg, var(--accent), var(--accent2)); box-shadow: 0 10px 30px rgba(110,231,255,.25); }
+    .brand h1 { margin:0; font-size: 1.15rem; letter-spacing: .2px; }
+    .brand p { margin:2px 0 0; color: var(--muted); font-size: .9rem; }
+    .pill { font-size:.8rem; color: var(--muted); border:1px solid var(--border); padding:8px 12px; border-radius:999px; background: rgba(255,255,255,.03); }
+    .hero { display:grid; grid-template-columns: 1.2fr .8fr; gap:18px; margin-bottom: 18px; }
+    .card { background: var(--card); border:1px solid var(--border); border-radius: 18px; padding: 20px; box-shadow: var(--shadow); backdrop-filter: blur(8px); }
+    .hero h2 { margin:0 0 8px; font-size: 1.8rem; line-height:1.15; }
+    .hero .sub { color: var(--muted); margin:0 0 18px; }
+    .status-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .dot { width:10px; height:10px; border-radius:50%; background: var(--muted); box-shadow: 0 0 0 6px rgba(148,163,184,.12); }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 0 6px rgba(52,211,153,.15); }
+    .dot.warn { background: var(--warn); box-shadow: 0 0 0 6px rgba(251,191,36,.15); }
+    .dot.bad { background: var(--bad); box-shadow: 0 0 0 6px rgba(251,113,133,.15); }
+    .status-text { font-weight:700; font-size:1.05rem; }
+    .muted { color: var(--muted); }
+    .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; margin-bottom: 18px; }
+    .stat { padding:16px; border-radius:14px; border:1px solid var(--border); background: rgba(255,255,255,.02); }
+    .stat .k { color: var(--muted); font-size:.82rem; margin-bottom:6px; }
+    .stat .v { font-size:1.5rem; font-weight:700; font-family: "JetBrains Mono", monospace; }
+    .progress-wrap { margin-top: 14px; }
+    .progress { height: 10px; border-radius:999px; background: rgba(148,163,184,.15); overflow:hidden; border:1px solid rgba(148,163,184,.12); }
+    .bar { height:100%; width:0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .6s ease; }
+    .row { display:flex; justify-content:space-between; gap:12px; color: var(--muted); font-size:.9rem; margin-top:8px; }
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
+    table { width:100%; border-collapse: collapse; }
+    td { padding: 10px 0; border-bottom: 1px solid rgba(148,163,184,.12); vertical-align: top; }
+    td:first-child { color: var(--muted); width: 45%; }
+    code, .mono { font-family: "JetBrains Mono", monospace; }
+    .tag { display:inline-block; padding:4px 10px; border-radius:999px; font-size:.78rem; border:1px solid var(--border); background: rgba(255,255,255,.03); }
+    footer { margin-top: 22px; color: var(--muted); font-size:.85rem; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    a { color: var(--accent); text-decoration: none; }
+    .error { color: var(--warn); }
+    @media (max-width: 900px) { .hero, .two { grid-template-columns: 1fr; } .grid { grid-template-columns: repeat(2,1fr); } }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } header { flex-direction: column; align-items: flex-start; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="mark">◆</div>
+        <div>
+          <h1>ddiloco.bsv.direct</h1>
+          <p>DiLoCo WAN — estado público de la red</p>
+        </div>
+      </div>
+      <div class="pill" id="updated">Actualizando…</div>
+    </header>
+
+    <section class="hero">
+      <div class="card">
+        <h2>Entrenamiento distribuido sobre internet</h2>
+        <p class="sub">Coordinación DiLoCo con adaptadores LoRA, sincronización periódica y transporte bitbeam/BSV. Esta página muestra solo métricas agregadas y sanitizadas.</p>
+        <div class="status-row">
+          <span class="dot" id="dot"></span>
+          <span class="status-text" id="statusText">Conectando…</span>
+          <span class="tag mono" id="runId">run: —</span>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress"><div class="bar" id="bar"></div></div>
+          <div class="row"><span id="progressLabel">Ronda — / —</span><span id="progressPct">0%</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="muted" style="margin-bottom:10px">Resumen rápido</div>
+        <table>
+          <tr><td>Workers activos</td><td class="mono" id="workers">—</td></tr>
+          <tr><td>Quorum / Mínimo</td><td class="mono" id="quorum">—</td></tr>
+          <tr><td>Updates pendientes</td><td class="mono" id="pending">—</td></tr>
+          <tr><td>Global step</td><td class="mono" id="gstep">—</td></tr>
+          <tr><td>Estado</td><td id="stateTag">—</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="stat card"><div class="k">Ronda actual</div><div class="v" id="round">—</div></div>
+      <div class="stat card"><div class="k">Rondas totales</div><div class="v" id="maxRounds">—</div></div>
+      <div class="stat card"><div class="k">Nodos en última ronda</div><div class="v" id="lastNodes">—</div></div>
+      <div class="stat card"><div class="k">Train loss (última)</div><div class="v" id="lastLoss">—</div></div>
+    </section>
+
+    <section class="two">
+      <div class="card">
+        <h3 style="margin:0 0 10px">Última ronda completada</h3>
+        <table>
+          <tr><td>Ronda</td><td class="mono" id="lrRound">—</td></tr>
+          <tr><td>Delta norm</td><td class="mono" id="lrDelta">—</td></tr>
+          <tr><td>Sync (s)</td><td class="mono" id="lrSync">—</td></tr>
+          <tr><td>Global step</td><td class="mono" id="lrStep">—</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="margin:0 0 10px">Sobre esta red</h3>
+        <p class="muted" style="margin-top:0">DiLoCo sincroniza solo adaptadores LoRA cada <em>H</em> pasos con un optimizador externo (Nesterov), permitiendo entrenar modelos grandes sobre conexiones domésticas/WAN.</p>
+        <p class="muted" style="margin-bottom:0">Identidad y transporte basados en BSV + bitbeam (MVP). Los datos sensibles (nodos, claves, logs, endpoints de control) no se exponen en esta página.</p>
+      </div>
+    </section>
+
+    <footer>
+      <div>ddiloco.bsv.direct · Estado público (sanitizado)</div>
+      <div id="footMsg" class="muted">Auto-refresh cada 15s</div>
+    </footer>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const API = params.get('api') || '/api/status';
+    const REFRESH_MS = 15000;
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = (v, d=4) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+    const fmtInt = (v) => (v == null || !isFinite(v)) ? '—' : String(Math.trunc(Number(v)));
+
+    function setStatus(kind, text) {
+      const dot = $('dot');
+      dot.className = 'dot' + (kind ? ' ' + kind : '');
+      $('statusText').textContent = text;
+    }
+
+    async function fetchStatus() {
+      const candidates = [API, '/v1/public/status', '/public/status'];
+      let lastErr = null;
+      for (const url of candidates) {
+        try {
+          const r = await fetch(url, { cache: 'no-store' });
+          if (!r.ok) { lastErr = new Error('HTTP ' + r.status); continue; }
+          return await r.json();
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error('no endpoint');
+    }
+
+    function render(data) {
+      const round = Number(data.round || 0);
+      const max = Number(data.max_rounds || 0);
+      const pct = max > 0 ? Math.min(100, Math.max(0, (round / max) * 100)) : 0;
+
+      $('runId').textContent = 'run: ' + (data.run_id || '—');
+      $('round').textContent = fmtInt(round);
+      $('maxRounds').textContent = fmtInt(max);
+      $('gstep').textContent = fmtInt(data.global_step);
+      $('workers').textContent = fmtInt(data.workers_active);
+      $('quorum').textContent = fmtInt(data.quorum) + ' / ' + fmtInt(data.min_workers);
+      $('pending').textContent = fmtInt(data.pending_updates);
+      $('bar').style.width = pct.toFixed(1) + '%';
+      $('progressLabel').textContent = `Ronda ${fmtInt(round)} / ${fmtInt(max)}`;
+      $('progressPct').textContent = pct.toFixed(0) + '%';
+
+      let kind = 'warn', label = 'En espera', tag = '<span class="tag">idle</span>';
+      if (data.has_failure) { kind = 'bad'; label = 'Error en la ejecución'; tag = '<span class="tag" style="color:#fb7185;border-color:rgba(251,113,133,.35)">failed</span>'; }
+      else if (data.finished) { kind = 'ok'; label = 'Finalizado'; tag = '<span class="tag" style="color:#34d399;border-color:rgba(52,211,153,.35)">finished</span>'; }
+      else if ((data.workers_active || 0) > 0 || round > 0) { kind = 'ok'; label = 'Entrenando'; tag = '<span class="tag" style="color:#6ee7ff;border-color:rgba(110,231,255,.35)">running</span>'; }
+      setStatus(kind, label);
+      $('stateTag').innerHTML = tag;
+
+      const lr = data.last_round || null;
+      $('lastNodes').textContent = lr ? fmtInt(lr.nodes_count) : '—';
+      $('lastLoss').textContent = lr ? fmt(lr.train_loss, 6) : '—';
+      $('lrRound').textContent = lr ? (fmtInt(lr.round) + ' → ' + fmtInt(lr.new_round)) : '—';
+      $('lrDelta').textContent = lr ? fmt(lr.delta_norm, 6) : '—';
+      $('lrSync').textContent = lr ? fmt(lr.sync_seconds, 3) : '—';
+      $('lrStep').textContent = lr ? fmtInt(lr.global_step) : '—';
+
+      const ts = data.updated_at ? new Date(data.updated_at * 1000) : new Date();
+      $('updated').textContent = 'Actualizado: ' + ts.toLocaleTimeString();
+      $('footMsg').textContent = 'Auto-refresh cada 15s · fuente: ' + (API || '/api/status');
+      $('footMsg').className = 'muted';
+    }
+
+    function renderError(err) {
+      setStatus('warn', 'Sin datos (coordinador no disponible)');
+      $('updated').textContent = 'Sin conexión';
+      $('footMsg').textContent = 'No se pudo obtener estado público: ' + (err && err.message ? err.message : err);
+      $('footMsg').className = 'muted error';
+      $('runId').textContent = 'run: —';
+    }
+
+    async function tick() {
+      try { render(await fetchStatus()); }
+      catch (e) { renderError(e); }
+    }
+
+    tick();
+    setInterval(tick, REFRESH_MS);
+  </script>
+</body>
+</html>

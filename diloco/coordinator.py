@@ -213,6 +213,9 @@ class Coordinator:
                     if route == "/v1/health":
                         self._send_json(200, coordinator.health())
                         return
+                    if route == "/v1/public/status":
+                        self._send_json(200, coordinator.public_status())
+                        return
                     self._authorize()
                     if route in ("/v1/metrics", "/v1/status"):
                         self._send_json(200, coordinator.status())
@@ -733,6 +736,37 @@ class Coordinator:
                 "max_rounds": int(self.config.coordinator.max_rounds),
                 "registered": len(self.registered),
                 "failure": self.failure,
+            }
+
+    def public_status(self) -> Dict[str, Any]:
+        with self.cond:
+            last = self.last_result or {}
+            last_round = None
+            if last:
+                last_round = {
+                    "round": int(last.get("round", 0)),
+                    "new_round": int(last.get("new_round", 0)),
+                    "global_step": int(last.get("global_step", 0)),
+                    "train_loss": float(last["train_loss"]) if last.get("train_loss") is not None else None,
+                    "delta_norm": float(last["delta_norm"]) if last.get("delta_norm") is not None else None,
+                    "sync_seconds": float(last["sync_seconds"]) if last.get("sync_seconds") is not None else None,
+                    "nodes_count": len(last.get("nodes") or []),
+                    "done": bool(last.get("done", False)),
+                }
+            return {
+                "ok": self.failure is None,
+                "run_id": self.config.run_id,
+                "round": int(self.round_index),
+                "max_rounds": int(self.config.coordinator.max_rounds),
+                "global_step": int(self.global_step),
+                "finished": bool(self.finished),
+                "has_failure": self.failure is not None,
+                "workers_active": len(self.registered),
+                "pending_updates": len(self.updates),
+                "quorum": int(self.config.coordinator.quorum),
+                "min_workers": int(self.config.coordinator.min_workers),
+                "last_round": last_round,
+                "updated_at": time.time(),
             }
 
     def status(self) -> Dict[str, Any]:

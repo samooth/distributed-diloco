@@ -1,0 +1,24 @@
+[Unit]
+Description=DiLoCo WAN Agent (dashboard/control)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tuuser
+Group=tuuser
+WorkingDirectory=/path/to/distributed-diloco
+# Crea /etc/diloco/agent.env con: AGENT_TOKEN=un-secreto-largo-y-aleatorio
+# y permisos: sudo chmod 600 /etc/diloco/agent.env
+EnvironmentFile=-/etc/diloco/agent.env
+ExecStart=/path/to/distributed-diloco/.venv/bin/python scripts/agent.py \
+  --host 127.0.0.1 --port 8765 --token ${AGENT_TOKEN}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=false
+
+# NOTA: el agente lanza procesos (coordinador/worker) en este host.
+# No lo expongas a internet sin autenticación fuerte. Protégelo con proxy + auth/VPN.
+
+[Install]
+WantedBy=multi-user.target

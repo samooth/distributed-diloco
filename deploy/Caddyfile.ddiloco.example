@@ -1,0 +1,82 @@
+# DiLoCo WAN - Caddy reverse proxy example
+# Dominio público:  ddiloco.bsv.direct
+# Dominio privado: dash.ddiloco.bsv.direct
+#
+# 1) Reemplaza /path/to/distributed-diloco por la ruta real en tu VPS.
+# 2) Ajusta puertos si tu coordinador/agente usan otros.
+# 3) Genera contraseña para basicauth: caddy hash-password --plaintext 'TU_PASSWORD'
+# 4) Copia a /etc/caddy/Caddyfile y recarga: sudo systemctl reload caddy
+
+# --- Página pública (solo lectura, sanitizada) ---
+ddiloco.bsv.direct {
+    encode gzip zstd
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        Referrer-Policy strict-origin-when-cross-origin
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        -Server
+    }
+
+    # Página pública estática
+    root * /path/to/distributed-diloco/web/public
+    try_files {path} /index.html
+    file_server
+
+    # Endpoint público sanitizado (proxy al coordinador)
+    # El frontend público hace fetch a /api/status por defecto.
+    @publicstatus path /api/status
+    handle @publicstatus {
+        rewrite * /v1/public/status
+        reverse_proxy 127.0.0.1:8095
+    }
+
+    # (Opcional) habilitar rate limiting si tienes el módulo/plugin correspondiente.
+    # NUNCA expongas /v1/register, /v1/update, /v1/state, /launch/*, /stop, etc.
+}
+
+# --- Dashboard privado (control/operación) ---
+# IMPORTANTE: el agente puede lanzar procesos en el VPS. Protégelo siempre.
+# Recomendado: usar Tailscale/Cloudflare Access en lugar de exponerlo a internet.
+dash.ddiloco.bsv.direct {
+    encode gzip zstd
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+
+    # Autenticación básica (mínimo). Recomendado: VPN/Tailscale o Cloudflare Access.
+    basicauth {
+        admin REEMPLAZA_CON_HASH_BCRYPT
+    }
+
+    # (Opcional) proxy privado a la API del coordinador si accedes remotamente al dashboard
+    # y necesitas consultar /v1/status desde el navegador. Mantén esto protegido por auth.
+    # OJO: el dashboard envía X-DiLoCo-Token desde el navegador; no inyectes tokens aquí
+    # a menos que entiendas las implicaciones.
+    # handle_path /coord/* {
+    #     reverse_proxy 127.0.0.1:8095
+    # }
+
+    # Agente: sirve web/ (dashboard) y endpoints de control (/launch/*, /stop, /processes)
+    # Ejecutar: ./agent --host 127.0.0.1 --port 8765 --token <secreto>
+    reverse_proxy 127.0.0.1:8765
+}
+
+# --- Alternativa: un solo subdominio ---
+# ddiloco.bsv.direct {
+#   root * /path/to/distributed-diloco/web/public
+#   file_server
+#   handle /api/status { rewrite * /v1/public/status; reverse_proxy 127.0.0.1:8095 }
+#   handle /app/* {
+#     basicauth { admin REEMPLAZA_CON_HASH_BCRYPT }
+#     uri strip_prefix /app
+#     reverse_proxy 127.0.0.1:8765
+#   }
+# }

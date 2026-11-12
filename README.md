@@ -92,6 +92,7 @@ cd network/holepunch-sidecar && npm install
 
 ## 📚 Documentación
 - [Onboarding](docs/ONBOARDING.md) — de cero a tu primera ronda.
+- [Despliegue público/privado](docs/DEPLOY_PUBLIC_DASHBOARD.md) — `ddiloco.bsv.direct`: página pública + dashboard privado.
 - [Algoritmo](docs/01-algoritmo.md) · [Arquitectura](docs/02-arquitectura.md) · [Comunicación](docs/03-comunicacion.md)
 - [Modelos](docs/04-modelos.md) · [Entrenamiento](docs/05-entrenamiento.md) · [Operaciones](docs/06-operaciones.md)
 - [Seguridad](docs/07-seguridad.md) · [Experimentos](docs/08-experimentos.md) · [Referencias](docs/09-referencias.md)

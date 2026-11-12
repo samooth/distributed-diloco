@@ -10,6 +10,7 @@ Notas detalladas de cambios y decisiones. El `README.md` es la presentación.
 - **Identidad BSV (MVP)**: `scripts/identity_init.py`, `network/holepunch-sidecar/identity.js` (generate/pubkey/sign/verify, ECDSA-SHA256-DER), `diloco/identity.py`.
 - **Admisión y firma de protocolo (MVP)**: registro con `node_pubkey` + firma verificada, allowlist (`--allow-pubkey*`, `--require-node-identity`, config), firma de metadatos de update verificada por coordinador; gRPC tolera campos de identidad.
 - **Invite firmado + UX**: `--print-invite` en coordinador, `--invite` en worker (verificación y autoconfiguración de topic/context/pubkey), `scripts/pilot.py` (`preflight|identity|up`) y wrapper `./pilot`.
+- **Página pública + estado sanitizado**: `GET /v1/public/status` (sin auth, métricas agregadas), `web/public/index.html` (status para `ddiloco.bsv.direct`) y `docs/DEPLOY_PUBLIC_DASHBOARD.md` (Caddy/nginx, subdominios, hardening).
 - **`GET /v1/state_meta`** (coordinador, autenticado): metadatos de ronda/estado sin descargar el blob completo.
 - **Bootstrap local de estado inicial** (worker): `--init-state` carga el bundle local si `state_hash`/`base_hash`/`config_hash` coinciden con el coordinador; evita descargas grandes por túnel en round 0.
 - **Autodetección/export de init state**: `run_worker.py`/`run_coordinator.py` descubren `runs/init-<config-stem>` para HF; `--init-state auto` en coordinador exporta el adaptador si falta.

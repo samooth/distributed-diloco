@@ -1,0 +1,28 @@
+[Unit]
+Description=DiLoCo WAN Coordinator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tuuser
+Group=tuuser
+WorkingDirectory=/path/to/distributed-diloco
+# Ajusta config, checkpoint-dir, init-state, p2p-topic, identidad, etc.
+ExecStart=/path/to/distributed-diloco/.venv/bin/python scripts/run_coordinator.py \
+  --config /path/to/distributed-diloco/configs/local/tu-config.json \
+  --checkpoint-dir /path/to/distributed-diloco/runs/tu-run \
+  --init-state auto \
+  --max-rounds 100 \
+  --no-wait
+Restart=on-failure
+RestartSec=5
+# Seguridad básica
+NoNewPrivileges=true
+PrivateTmp=true
+
+# El coordinador escucha en host/puerto configurados en tu config.
+# Para uso detrás de proxy público (solo /v1/public/status), mantenerlo en 127.0.0.1.
+
+[Install]
+WantedBy=multi-user.target
