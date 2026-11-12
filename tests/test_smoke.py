@@ -649,6 +649,129 @@ class LocalhostSmokeTests(unittest.TestCase):
                 for worker in workers:
                     worker.close()
 
+    def test_state_meta_includes_blob_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-state-manifest",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=1, max_workers=1, quorum=1, max_rounds=1,
+                    checkpoint_dir=tmp, token="", idle_timeout_s=0,
+                ),
+            )
+            state, base_hash, _adapter_meta = initial_adapter_state(config, device="cpu")
+            coord = Coordinator(config, state, base_hash)
+            port = coord.start()
+            try:
+                import json
+                import urllib.request
+                req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/state_meta")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    meta = json.loads(resp.read().decode("utf-8"))
+                self.assertIn("state_blob_hash", meta)
+                self.assertIn("state_blob_bytes", meta)
+                self.assertIn("state_blob_chunk_size", meta)
+                self.assertIn("state_blob_chunk_hashes", meta)
+                self.assertIn("state_blob_merkle_root", meta)
+                self.assertEqual(meta["state_blob_bytes"], sum(1 for _ in []) + meta["state_blob_bytes"])  # sanity
+                self.assertIsInstance(meta["state_blob_chunk_hashes"], list)
+                self.assertGreater(len(meta["state_blob_chunk_hashes"]), 0)
+                self.assertTrue(meta["state_blob_merkle_root"])
+            finally:
+                coord.stop()
+
+    def test_state_http_range_and_resume_reassembly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-state-range",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=1, max_workers=1, quorum=1, max_rounds=1,
+                    checkpoint_dir=tmp, token="", idle_timeout_s=0,
+                ),
+            )
+            state, base_hash, _adapter_meta = initial_adapter_state(config, device="cpu")
+            coord = Coordinator(config, state, base_hash)
+            port = coord.start()
+            try:
+                import json
+                import urllib.request
+                # register a node so /v1/state access is allowed
+                reg_body = json.dumps({
+                    "node_id": "node-range",
+                    "config_hash": config.fingerprint(),
+                    "base_hash": base_hash,
+                }).encode("utf-8")
+                reg_req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/v1/register",
+                    data=reg_body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(reg_req, timeout=10) as resp:
+                    self.assertEqual(resp.status, 200)
+
+                meta_req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/state_meta")
+                with urllib.request.urlopen(meta_req, timeout=10) as resp:
+                    meta = json.loads(resp.read().decode("utf-8"))
+                total = int(meta["state_blob_bytes"])
+                blob_hash = str(meta["state_blob_hash"])
+                chunk_hashes = list(meta.get("state_blob_chunk_hashes") or [])
+                chunk_size = int(meta.get("state_blob_chunk_size") or 0)
+
+                # full fetch
+                full_url = f"http://127.0.0.1:{port}/v1/state?node_id=node-range"
+                with urllib.request.urlopen(full_url, timeout=10) as resp:
+                    self.assertEqual(resp.status, 200)
+                    full = resp.read()
+                    self.assertEqual(resp.headers.get("Accept-Ranges"), "bytes")
+                    self.assertTrue(resp.headers.get("ETag"))
+                self.assertEqual(len(full), total)
+                self.assertEqual(hashlib_sha256(full), blob_hash)
+
+                # range fetch and reassembly (simulate resume in small chunks)
+                assembled = bytearray()
+                step = max(1, min(97, total // 3 or 1))  # odd size to exercise partial boundaries
+                offset = 0
+                while offset < total:
+                    end = min(total - 1, offset + step - 1)
+                    req = urllib.request.Request(full_url, headers={"Range": f"bytes={offset}-{end}"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        self.assertEqual(resp.status, 206)
+                        part = resp.read()
+                        cr = resp.headers.get("Content-Range", "")
+                        self.assertTrue(cr.startswith(f"bytes {offset}-{offset + len(part) - 1}/"))
+                    assembled.extend(part)
+                    offset += len(part)
+                self.assertEqual(bytes(assembled), full)
+                self.assertEqual(hashlib_sha256(bytes(assembled)), blob_hash)
+
+                # verify chunk manifest matches
+                if chunk_hashes and chunk_size > 0:
+                    got = [hashlib_sha256(full[i:i+chunk_size]) for i in range(0, len(full), chunk_size)]
+                    self.assertEqual(got, chunk_hashes)
+
+                # invalid ranges -> 416
+                bad_req = urllib.request.Request(full_url, headers={"Range": f"bytes={total + 10}-{total + 20}"})
+                try:
+                    urllib.request.urlopen(bad_req, timeout=10)
+                    self.fail("expected 416 for unsatisfiable range")
+                except urllib.error.HTTPError as exc:
+                    self.assertEqual(exc.code, 416)
+                    self.assertIn("bytes */", exc.headers.get("Content-Range", ""))
+                    exc.read()
+            finally:
+                coord.stop()
+
+
+def hashlib_sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
 
 if __name__ == "__main__":
     unittest.main()

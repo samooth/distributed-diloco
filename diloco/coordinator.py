@@ -6,6 +6,7 @@ P2 upgrade; the aggregation and checkpoint code is transport-independent.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
@@ -46,6 +47,41 @@ class ApiError(Exception):
         super().__init__(message)
         self.status = int(status)
         self.message = str(message)
+
+
+STATE_BLOB_CHUNK_SIZE = 4 * 1024 * 1024
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _blob_chunk_hashes(blob: bytes, chunk_size: int = STATE_BLOB_CHUNK_SIZE) -> List[str]:
+    if chunk_size <= 0:
+        chunk_size = STATE_BLOB_CHUNK_SIZE
+    if not blob:
+        return [_sha256_hex(b"")]
+    return [_sha256_hex(blob[i : i + chunk_size]) for i in range(0, len(blob), chunk_size)]
+
+
+def _merkle_root_hex(chunk_hashes: List[str]) -> str:
+    if not chunk_hashes:
+        return _sha256_hex(b"")
+    level = [bytes.fromhex(h) for h in chunk_hashes]
+    while len(level) > 1:
+        if len(level) % 2 == 1:
+            level.append(level[-1])
+        nxt = []
+        for i in range(0, len(level), 2):
+            nxt.append(hashlib.sha256(level[i] + level[i + 1]).digest())
+        level = nxt
+    return level[0].hex()
+
+
+def _state_etag(state_hash: str, round_index: int, blob_hash: str = "") -> str:
+    # Strong ETag identifying exact state content/version
+    suffix = blob_hash[:16] if blob_hash else str(int(round_index))
+    return f'"{state_hash}:{int(round_index)}:{suffix}"'
 
 
 class _Server(ThreadingHTTPServer):
@@ -235,7 +271,39 @@ class Coordinator:
                         return
                     if route == "/v1/state":
                         node_id = self._query().get("node_id", "")
-                        blob = coordinator.get_state(node_id)
+                        # fetch blob + cache info under lock for consistent metadata/etag
+                        with coordinator.cond:
+                            coordinator._evict_stale_locked()
+                            coordinator._require_node_locked(node_id)
+                            if coordinator.failure:
+                                raise ApiError(503, f"run failed: {coordinator.failure}")
+                            coordinator.registered[node_id]["last_seen"] = time.time()
+                            coordinator.last_activity = time.time()
+                            blob_info = coordinator._ensure_state_blob_locked()
+                            blob = blob_info["blob"]
+                            etag = str(blob_info["etag"])
+                            state_hash = str(blob_info["state_hash"])
+                            round_idx = int(blob_info["round"])
+                            blob_hash = str(blob_info["blob_hash"])
+                        common_headers = {
+                            "ETag": etag,
+                            "X-DiLoCo-Round": str(round_idx),
+                            "X-DiLoCo-State-Hash": state_hash,
+                            "X-DiLoCo-Blob-Hash": blob_hash,
+                            "Cache-Control": "no-store",
+                        }
+                        inm = (self.headers.get("If-None-Match", "") or "").strip()
+                        if inm and inm == etag:
+                            self.send_response(304)
+                            self.send_header("ETag", etag)
+                            self.send_header("X-DiLoCo-Round", str(round_idx))
+                            self.send_header("X-DiLoCo-State-Hash", state_hash)
+                            self.send_header("X-DiLoCo-Blob-Hash", blob_hash)
+                            self.send_header("Cache-Control", "no-store")
+                            self.send_header("Accept-Ranges", "bytes")
+                            self.send_header("Content-Length", "0")
+                            self.end_headers()
+                            return
                         range_header = self.headers.get("Range", "")
                         if range_header:
                             if not range_header.startswith("bytes="):
@@ -260,19 +328,18 @@ class Coordinator:
                             if start < 0 or end < start or start >= len(blob):
                                 self.send_response(416)
                                 self.send_header("Content-Range", f"bytes */{len(blob)}")
+                                self.send_header("ETag", etag)
+                                self.send_header("Accept-Ranges", "bytes")
                                 self.send_header("Content-Length", "0")
                                 self.end_headers()
                                 return
                             end = min(end, len(blob) - 1)
                             chunk = blob[start : end + 1]
-                            self._send_bytes(
-                                206,
-                                chunk,
-                                "application/octet-stream",
-                                extra_headers={"Content-Range": f"bytes {start}-{end}/{len(blob)}"},
-                            )
+                            headers = dict(common_headers)
+                            headers["Content-Range"] = f"bytes {start}-{end}/{len(blob)}"
+                            self._send_bytes(206, chunk, "application/octet-stream", extra_headers=headers)
                             return
-                        self._send_bytes(200, blob, "application/octet-stream")
+                        self._send_bytes(200, blob, "application/octet-stream", extra_headers=common_headers)
                         return
                     raise ApiError(404, f"unknown route: {route}")
                 except ApiError as exc:
@@ -434,12 +501,19 @@ class Coordinator:
             "adapter_meta": self.adapter_meta,
         }
         blob = pack_state(meta, self.global_state)
+        blob_hash = hash_blob(blob)
+        chunk_hashes = _blob_chunk_hashes(blob, STATE_BLOB_CHUNK_SIZE)
+        merkle_root = _merkle_root_hex(chunk_hashes)
         cache = {
             "round": int(self.round_index),
             "state_hash": self._state_hash,
             "blob": blob,
-            "blob_hash": hash_blob(blob),
+            "blob_hash": blob_hash,
             "blob_size": len(blob),
+            "chunk_size": STATE_BLOB_CHUNK_SIZE,
+            "chunk_hashes": chunk_hashes,
+            "merkle_root": merkle_root,
+            "etag": _state_etag(self._state_hash, self.round_index, blob_hash),
             "meta": meta,
         }
         self._state_blob_cache = cache
@@ -450,6 +524,10 @@ class Coordinator:
         meta = dict(blob_info["meta"])
         meta["state_blob_hash"] = blob_info["blob_hash"]
         meta["state_blob_bytes"] = int(blob_info["blob_size"])
+        meta["state_blob_chunk_size"] = int(blob_info["chunk_size"])
+        meta["state_blob_chunk_hashes"] = list(blob_info["chunk_hashes"])
+        meta["state_blob_merkle_root"] = str(blob_info["merkle_root"])
+        meta["state_etag"] = str(blob_info["etag"])
         return meta
 
     def state_meta(self) -> Dict[str, Any]:

@@ -1,6 +1,7 @@
 """DiLoCo worker: local adapter steps + pseudo-gradient upload + global reload."""
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import logging
@@ -10,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 import torch
 
@@ -205,25 +206,64 @@ class Worker:
         raise CoordinatorError(0, f"request failed after {attempts} attempts: {last_exc}") from last_exc
 
     def _download_state_blob_http(self, expected_meta: Optional[Mapping[str, Any]] = None) -> bytes:
-        """Download /v1/state with Range-based resume and optional blob hash verification."""
+        """Download /v1/state with Range-based resume, chunk/manifest verification and idempotent retries."""
         query = urllib.parse.urlencode({"node_id": self.node_id})
         path = f"/v1/state?{query}"
         expected_hash = str((expected_meta or {}).get("state_blob_hash", "") or "")
         expected_size = int((expected_meta or {}).get("state_blob_bytes", 0) or 0)
-        chunk_size = 8 * 1024 * 1024
-        if expected_size <= 0 or expected_size <= chunk_size:
-            # Small/unknown: single request (keeps compatibility/simple path)
+        expected_state_hash = str((expected_meta or {}).get("state_hash", "") or "")
+        expected_round = int((expected_meta or {}).get("round", 0) or 0)
+        manifest_chunk_size = int((expected_meta or {}).get("state_blob_chunk_size", 0) or 0)
+        manifest_hashes = list((expected_meta or {}).get("state_blob_chunk_hashes") or [])
+        merkle_root = str((expected_meta or {}).get("state_blob_merkle_root", "") or "")
+
+        def _verify_manifest(blob: bytes) -> bool:
+            if not expected_hash and not manifest_hashes:
+                return True
+            if expected_hash and hash_blob(blob) != expected_hash:
+                return False
+            if manifest_hashes and manifest_chunk_size > 0:
+                got = []
+                for i in range(0, len(blob), manifest_chunk_size):
+                    got.append(hashlib.sha256(blob[i : i + manifest_chunk_size]).hexdigest())
+                if got != list(manifest_hashes):
+                    return False
+            return True
+
+        # Small/unknown blobs: single request (compatibility path)
+        if expected_size <= 0 or (expected_size <= 8 * 1024 * 1024 and not manifest_hashes):
             _, raw, _, _ = self._request("GET", path)
-            if expected_hash and hash_blob(raw) != expected_hash:
-                raise CoordinatorError(0, "state blob hash mismatch")
+            if not _verify_manifest(raw):
+                raise CoordinatorError(0, "state blob hash/manifest mismatch")
             return raw
+
+        chunk_size = manifest_chunk_size if manifest_chunk_size > 0 else 8 * 1024 * 1024
+        if chunk_size <= 0:
+            chunk_size = 8 * 1024 * 1024
+
+        def _state_changed(headers: Mapping[str, str]) -> bool:
+            h_blob = str(headers.get("X-DiLoCo-Blob-Hash", "") or "")
+            h_state = str(headers.get("X-DiLoCo-State-Hash", "") or "")
+            h_round = str(headers.get("X-DiLoCo-Round", "") or "")
+            if expected_hash and h_blob and h_blob != expected_hash:
+                return True
+            if expected_state_hash and h_state and h_state != expected_state_hash:
+                return True
+            # allow round to move forward only if hash also matches expectation logic; safest: require same expected identity when provided
+            if expected_round and h_round and str(expected_round) != h_round and (expected_hash or expected_state_hash):
+                # if blob/state hashes are consistent with expected, round header alone is not authoritative; otherwise treat as changed
+                if not ((expected_hash and h_blob == expected_hash) or (expected_state_hash and h_state == expected_state_hash)):
+                    return True
+            return False
 
         buf = bytearray()
         offset = 0
         attempts = 0
-        max_attempts = 20
+        max_attempts = 30
+        restart_count = 0
         while offset < expected_size and attempts < max_attempts:
             end = min(expected_size - 1, offset + chunk_size - 1)
+            expected_chunk_index = offset // chunk_size if chunk_size > 0 else 0
             try:
                 status, data, _, resp_headers = self._request(
                     "GET",
@@ -234,11 +274,11 @@ class Worker:
             except CoordinatorError as exc:
                 attempts += 1
                 if exc.status == 416:
-                    # If server reports mismatch, restart from scratch once
-                    if offset > 0:
+                    if restart_count < 2:
                         LOG.warning("%s range not satisfiable at offset %s, restarting state download", self.node_id, offset)
                         buf.clear()
                         offset = 0
+                        restart_count += 1
                         continue
                 LOG.warning("%s state chunk download failed (attempt %s): %s", self.node_id, attempts, exc)
                 time.sleep(min(1.5 * attempts, 8.0))
@@ -250,30 +290,80 @@ class Worker:
                 continue
 
             if status == 200:
-                # Server ignored Range or returned full blob; accept if complete and valid
+                # Server ignored Range or returned full blob
                 if data and offset == 0:
-                    if expected_hash and hash_blob(data) != expected_hash:
+                    if not _verify_manifest(data):
                         attempts += 1
-                        LOG.warning("%s full state blob hash mismatch (attempt %s)", self.node_id, attempts)
+                        LOG.warning("%s full state blob/manifest mismatch (attempt %s)", self.node_id, attempts)
                         continue
                     return data
                 attempts += 1
                 continue
+
             if status != 206 or not data:
                 attempts += 1
                 continue
-            # Accept partial chunk (may be shorter than requested due to IncompleteRead recovery)
+
+            if _state_changed(resp_headers):
+                if restart_count < 3:
+                    LOG.warning("%s coordinator state changed during download, restarting", self.node_id)
+                    buf.clear()
+                    offset = 0
+                    restart_count += 1
+                    # refresh expected identity from latest metadata when possible
+                    try:
+                        fresh = self.get_state_meta()
+                        expected_hash = str(fresh.get("state_blob_hash", expected_hash) or expected_hash)
+                        expected_size = int(fresh.get("state_blob_bytes", expected_size) or expected_size)
+                        expected_state_hash = str(fresh.get("state_hash", expected_state_hash) or expected_state_hash)
+                        expected_round = int(fresh.get("round", expected_round) or expected_round)
+                        manifest_chunk_size = int(fresh.get("state_blob_chunk_size", manifest_chunk_size) or manifest_chunk_size)
+                        manifest_hashes = list(fresh.get("state_blob_chunk_hashes") or manifest_hashes)
+                        if manifest_chunk_size > 0:
+                            chunk_size = manifest_chunk_size
+                    except Exception:  # noqa: BLE001
+                        pass
+                    continue
+                raise CoordinatorError(0, "coordinator state kept changing during download")
+
+            # Accept partial data; accumulate until we have this chunk complete (or final tail)
+            chunk_end = min(expected_size, offset - (offset % chunk_size) + chunk_size) if chunk_size > 0 else expected_size
+            # But we requested from `offset` to `end`; append what we got
             buf.extend(data)
-            offset += len(data)
-            attempts = 0  # progress made
+            new_offset = offset + len(data)
+            # Verify completed manifest chunks
+            if manifest_hashes and manifest_chunk_size > 0:
+                verified_chunks = len(buf) // manifest_chunk_size
+                # verify the chunk(s) that just became complete
+                start_chunk = offset // manifest_chunk_size
+                end_chunk_complete = min(verified_chunks, len(manifest_hashes))
+                for idx in range(start_chunk, end_chunk_complete):
+                    cstart = idx * manifest_chunk_size
+                    cend = min(expected_size, cstart + manifest_chunk_size)
+                    if len(buf) < cend:
+                        break
+                    chash = hashlib.sha256(bytes(buf[cstart:cend])).hexdigest()
+                    expected_chash = str(manifest_hashes[idx])
+                    if chash != expected_chash:
+                        # discard this chunk and retry from its start
+                        LOG.warning("%s chunk hash mismatch at index %s, retrying chunk", self.node_id, idx)
+                        del buf[cstart:]
+                        new_offset = cstart
+                        attempts += 1
+                        data = b""  # mark no progress in terms of valid bytes
+                        break
+            offset = new_offset
+            if len(data) > 0 and offset > (new_offset - len(data)):
+                attempts = 0  # progress made
+
             if offset >= expected_size:
                 break
 
         if offset < expected_size:
             raise CoordinatorError(0, f"incomplete state download ({offset}/{expected_size} bytes)")
         blob = bytes(buf[:expected_size])
-        if expected_hash and hash_blob(blob) != expected_hash:
-            raise CoordinatorError(0, "state blob hash mismatch after resumable download")
+        if not _verify_manifest(blob):
+            raise CoordinatorError(0, "state blob hash/manifest mismatch after resumable download")
         return blob
 
     def register(self) -> Dict[str, Any]:
