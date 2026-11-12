@@ -366,87 +366,212 @@ document.querySelector("[data-skip]").addEventListener("click", () => {
 const params = new URLSearchParams(window.location.search);
 const paramUrl = params.get("url");
 const paramToken = params.get("token");
+const paramAgentUrl = params.get("agent");
 const savedUrl = localStorage.getItem("diloco-url");
 const savedToken = localStorage.getItem("diloco-token");
+const savedAgentUrl = localStorage.getItem("diloco-agent-url");
 if (paramUrl) $("url").value = paramUrl;
 else if (savedUrl) $("url").value = savedUrl;
 if (paramToken) $("token").value = paramToken;
 else if (savedToken) $("token").value = savedToken;
+if ($("agent-url")) {
+  if (paramAgentUrl) $("agent-url").value = paramAgentUrl;
+  else if (savedAgentUrl) $("agent-url").value = savedAgentUrl;
+  else if ($("agent-url").value === "http://127.0.0.1:8765" && location.protocol.startsWith("http") && !["127.0.0.1", "localhost"].includes(location.hostname)) {
+    $("agent-url").value = location.origin;
+  }
+  $("agent-url").addEventListener("change", () => localStorage.setItem("diloco-agent-url", $("agent-url").value.trim()));
+}
 
 // Launcher (agent)
+const LAUNCHER_STORAGE_KEY = "diloco-launcher-config-v1";
+const launcherFieldIds = [
+  "lc-config","lc-device","lc-max-rounds","lc-init-state","lc-p2p-topic","lc-p2p-context","lc-coord-identity","lc-allow-pubkeys","lc-require-node-identity",
+  "lw-config","lw-device","lw-node-id","lw-shard-id","lw-coordinator","lw-p2p-topic","lw-tunnel-port","lw-init-state","lw-p2p-context","lw-node-identity","lw-coordinator-pubkey","lw-invite"
+];
+
+function loadLauncherConfig() {
+  try {
+    const raw = localStorage.getItem(LAUNCHER_STORAGE_KEY);
+    if (!raw) return;
+    const cfg = JSON.parse(raw);
+    launcherFieldIds.forEach((id) => {
+      const el = $(id);
+      if (!el || !(id in cfg)) return;
+      if (el.type === "checkbox") el.checked = !!cfg[id];
+      else el.value = cfg[id] ?? "";
+    });
+    const st = $("launcher-config-status");
+    if (st) st.textContent = "configuración cargada";
+  } catch (_) { /* ignore */ }
+}
+
+function saveLauncherConfig() {
+  const cfg = {};
+  launcherFieldIds.forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    cfg[id] = el.type === "checkbox" ? !!el.checked : el.value;
+  });
+  try {
+    localStorage.setItem(LAUNCHER_STORAGE_KEY, JSON.stringify(cfg));
+    const st = $("launcher-config-status");
+    if (st) st.textContent = "guardado " + new Date().toLocaleTimeString();
+    toast("Configuración de launcher guardada", "info");
+  } catch (e) {
+    log(`No se pudo guardar configuración: ${e.message}`, "warn");
+  }
+}
+
+function setVal(id, v) { const el = $(id); if (el) el.value = v; }
+function getVal(id) { const el = $(id); return el ? String(el.value || "").trim() : ""; }
+function getNum(id, def = 0) {
+  const raw = getVal(id);
+  if (raw === "") return def;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : def;
+}
+
 async function agentFetch(path, opts = {}) {
-  const base = $("agent-url").value.trim().replace(/\/$/, "");
-  const res = await fetch(base + path, opts);
-  if (!res.ok) throw new Error(`${res.status}`);
+  const base = ($("agent-url")?.value || "").trim().replace(/\/$/, "");
+  if (!base) throw new Error("Agent URL vacío");
+  const res = await fetch(base + path, { credentials: "same-origin", ...opts });
+  if (res.status === 401) {
+    throw new Error("401 no autorizado (inicia sesión con AGENT_TOKEN en el agente)");
+  }
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.text()).slice(0, 120); } catch (_) {}
+    throw new Error(`${res.status}${detail ? " " + detail : ""}`);
+  }
   return res.json();
 }
 
 async function refreshProcs() {
+  const tb = document.querySelector("#procs-table tbody");
+  if (!tb) return;
   try {
     const procs = await agentFetch("/processes");
-    const tb = document.querySelector("#procs-table tbody");
     tb.innerHTML = "";
-    if (procs.length === 0) {
+    if (!Array.isArray(procs) || procs.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="5" class="empty">Sin procesos lanzados</td>`;
+      tr.innerHTML = `<td colspan="6" class="empty">Sin procesos lanzados</td>`;
       tb.appendChild(tr);
       return;
     }
     procs.forEach((p) => {
       const tr = document.createElement("tr");
+      const cmd = (p.cmd || []).join(" ");
+      const logPath = p.log || "";
       tr.innerHTML = `
-        <td class="mono">${p.id}</td>
-        <td class="mono">${p.pid}</td>
+        <td class="mono">${escapeHtml(p.id || "")}</td>
+        <td class="mono">${escapeHtml(p.pid ?? "")}</td>
         <td>${p.running ? '<span class="pill pill-ok">running</span>' : '<span class="pill pill-idle">stopped</span>'}</td>
-        <td class="mono" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml((p.cmd || []).join(" "))}</td>
-        <td><button class="btn btn-ghost btn-sm" data-stop="${p.id}">Stop</button></td>`;
+        <td class="mono"><span class="cmd-cell" title="${escapeHtml(cmd)}">${escapeHtml(cmd)}</span></td>
+        <td class="mono"><span class="cmd-cell" title="${escapeHtml(logPath)}">${escapeHtml(logPath || "—")}</span></td>
+        <td>${p.running ? `<button class="btn btn-ghost btn-sm" data-stop="${escapeHtml(p.id)}">Stop</button>` : '<span class="muted">—</span>'}</td>`;
       tb.appendChild(tr);
     });
     tb.querySelectorAll("[data-stop]").forEach((b) => {
       b.addEventListener("click", async () => {
-        try { await agentFetch("/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.stop }) }); log(`Proceso ${b.dataset.stop} detenido`, "warn"); refreshProcs(); }
-        catch (e) { log(`Error al detener: ${e.message}`, "err"); }
+        try {
+          await agentFetch("/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.stop }) });
+          log(`Proceso ${b.dataset.stop} detenido`, "warn");
+          toast("Proceso detenido", "warn");
+          refreshProcs();
+        } catch (e) {
+          log(`Error al detener: ${e.message}`, "err");
+          toast(`Error al detener: ${e.message}`, "err", 4500);
+        }
       });
     });
   } catch (e) {
-    log(`Agent error: ${e.message}`, "err");
+    // Keep last known rows on transient errors? replace with a clear message
+    tb.innerHTML = `<tr><td colspan="6" class="empty">Agent: ${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
-$("launch-coord").addEventListener("click", async () => {
+function buildCoordinatorPayload() {
   const payload = {
-    config: "configs/qwen3-4b-2nodes.json",
-    max_rounds: 3,
-    device: "cuda",
-    init_state: "runs/init-qwen3-4b-2nodes",
-    p2p_topic: "diloco-run-4b",
+    config: getVal("lc-config") || "configs/smoke.json",
+    max_rounds: Math.max(1, getNum("lc-max-rounds", 3)),
+    device: getVal("lc-device") || "cpu",
   };
+  const initState = getVal("lc-init-state"); if (initState) payload.init_state = initState;
+  const topic = getVal("lc-p2p-topic"); if (topic) payload.p2p_topic = topic;
+  const context = getVal("lc-p2p-context"); if (context) payload.p2p_context = context;
+  const ident = getVal("lc-coord-identity"); if (ident) payload.coordinator_identity = ident;
+  const allowRaw = ($("lc-allow-pubkeys")?.value || "").trim();
+  if (allowRaw) {
+    payload.allow_pubkeys = allowRaw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  }
+  if ($("lc-require-node-identity")?.checked) payload.require_node_identity = true;
+  return payload;
+}
+
+function buildWorkerPayload() {
+  const payload = {
+    config: getVal("lw-config") || "configs/smoke.json",
+    node_id: getVal("lw-node-id") || "node-0",
+    shard_id: Math.max(0, getNum("lw-shard-id", 0)),
+    device: getVal("lw-device") || "cpu",
+  };
+  const coordinator = getVal("lw-coordinator"); if (coordinator) payload.coordinator = coordinator;
+  const topic = getVal("lw-p2p-topic"); if (topic) payload.p2p_topic = topic;
+  const tunnelPort = getNum("lw-tunnel-port", 0); if (tunnelPort > 0) payload.tunnel_listen_port = tunnelPort;
+  const initState = getVal("lw-init-state"); if (initState) payload.init_state = initState;
+  const context = getVal("lw-p2p-context"); if (context) payload.p2p_context = context;
+  const ident = getVal("lw-node-identity"); if (ident) payload.node_identity = ident;
+  const coordPk = getVal("lw-coordinator-pubkey"); if (coordPk) payload.coordinator_pubkey = coordPk;
+  const invite = getVal("lw-invite"); if (invite) payload.invite = invite;
+  return payload;
+}
+
+$("launch-coord")?.addEventListener("click", async () => {
+  const payload = buildCoordinatorPayload();
   try {
     const r = await agentFetch("/launch/coordinator", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     log(`Coordinador lanzado: ${r.id}`, "info");
+    toast("Coordinador lanzado", "info");
     refreshProcs();
-  } catch (e) { log(`Error lanzando coordinador: ${e.message}`, "err"); }
+  } catch (e) {
+    log(`Error lanzando coordinador: ${e.message}`, "err");
+    toast(`Error lanzando coordinador: ${e.message}`, "err", 4500);
+  }
 });
 
-$("launch-worker").addEventListener("click", async () => {
-  const nodeId = prompt("Node ID", "node-0");
-  const shardId = parseInt(prompt("Shard ID", "0"), 10);
-  const payload = {
-    config: "configs/qwen3-4b-2nodes.json",
-    node_id: nodeId,
-    shard_id: shardId,
-    device: "cuda",
-    p2p_topic: "diloco-run-4b",
-    tunnel_listen_port: 18080 + shardId,
-  };
+$("launch-worker")?.addEventListener("click", async () => {
+  const payload = buildWorkerPayload();
   try {
     const r = await agentFetch("/launch/worker", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    log(`Worker lanzado: ${r.id}`, "info");
+    log(`Worker lanzado: ${r.id} (${payload.node_id})`, "info");
+    toast(`Worker ${payload.node_id} lanzado`, "info");
     refreshProcs();
-  } catch (e) { log(`Error lanzando worker: ${e.message}`, "err"); }
+  } catch (e) {
+    log(`Error lanzando worker: ${e.message}`, "err");
+    toast(`Error lanzando worker: ${e.message}`, "err", 4500);
+  }
 });
 
-$("refresh-procs").addEventListener("click", refreshProcs);
-setInterval(refreshProcs, 5000);
+$("refresh-procs")?.addEventListener("click", refreshProcs);
+$("toggle-launcher-config")?.addEventListener("click", () => {
+  const panel = $("launcher-config");
+  if (!panel) return;
+  panel.hidden = !panel.hidden;
+  $("toggle-launcher-config").textContent = panel.hidden ? "Mostrar configuración" : "Ocultar configuración";
+});
+$("save-launcher-config")?.addEventListener("click", saveLauncherConfig);
 
-log("Dashboard listo. Introduce URL y token, luego pulsa Conectar.", "info");
+// Prefill launcher defaults from coordinator connection when useful
+(() => {
+  const coordUrl = ($("url")?.value || "").trim();
+  const token = ($("token")?.value || "").trim();
+  if (coordUrl && !$("lw-coordinator")?.value) setVal("lw-coordinator", coordUrl);
+  // keep token handling separate (coordinator token is for dashboard->coordinator API)
+})();
+
+loadLauncherConfig();
+setInterval(refreshProcs, 5000);
+refreshProcs();
+
+log("Dashboard listo. Conecta al coordinador y, si usas launcher, revisa Agent URL/configuración.", "info");

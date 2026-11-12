@@ -257,3 +257,92 @@ body.dark .brand-mark {
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(148,163,184,0.04), transparent);
 }
+
+.panel-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: -2px 0 4px;
+}
+.panel-note .mono { font-family: var(--font-mono); font-size: 0.78rem; }
+
+.launcher-config {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.launcher-config[hidden] { display: none; }
+.launcher-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 1000px) { .launcher-grid { grid-template-columns: 1fr; } }
+.launcher-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.launcher-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.launcher-card-head h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.form-grid label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding-top: 20px;
+}
+.form-grid label.span-2 { grid-column: span 2; }
+.form-grid input, .form-grid textarea, .form-grid select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-family: var(--font-sans);
+}
+.form-grid textarea { resize: vertical; min-height: 42px; font-family: var(--font-mono); font-size: 0.78rem; }
+.form-grid input[type="checkbox"] { width: auto; }
+.form-grid input:focus, .form-grid textarea:focus, .form-grid select:focus {
+  outline: none; border-color: var(--accent);
+}
+.launcher-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+td .cmd-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}

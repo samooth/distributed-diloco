@@ -61,17 +61,65 @@
 
       <section class="panel panel-full">
         <div class="panel-head">
-          <h2>Launcher (procesos)</h2>
+          <h2>Launcher (agente)</h2>
           <div class="panel-actions">
-            <button id="launch-coord" class="btn btn-primary btn-sm">Lanzar coordinador</button>
-            <button id="launch-worker" class="btn btn-ghost btn-sm">Lanzar worker</button>
+            <button id="toggle-launcher-config" class="btn btn-ghost btn-sm">Mostrar configuración</button>
             <button id="refresh-procs" class="btn btn-ghost btn-sm">Refrescar</button>
           </div>
         </div>
+        <p class="panel-note">El agente debe estar accesible en <span class="mono">Agent URL</span> (arriba). Si el agente tiene token, el navegador pedirá login HTTP Basic (contraseña = <span class="mono">AGENT_TOKEN</span>). Los procesos se ejecutan en la máquina del agente.</p>
+
+        <div id="launcher-config" class="launcher-config" hidden>
+          <div class="launcher-grid">
+            <div class="launcher-card">
+              <div class="launcher-card-head">
+                <h3>Coordinador</h3>
+                <button id="launch-coord" class="btn btn-primary btn-sm">Lanzar coordinador</button>
+              </div>
+              <div class="form-grid">
+                <label>Config<input id="lc-config" type="text" value="configs/smoke.json" /></label>
+                <label>Device<input id="lc-device" type="text" value="cpu" placeholder="cpu / cuda" /></label>
+                <label>Max rounds<input id="lc-max-rounds" type="number" value="3" min="1" /></label>
+                <label>Init state<input id="lc-init-state" type="text" placeholder="auto o runs/init-..." /></label>
+                <label>P2P topic<input id="lc-p2p-topic" type="text" placeholder="diloco-run-..." /></label>
+                <label>P2P context<input id="lc-p2p-context" type="text" placeholder="opcional" /></label>
+                <label class="span-2">Coordinator identity<input id="lc-coord-identity" type="text" placeholder="runs/identity/coordinator.json" /></label>
+                <label class="span-2">Allow pubkeys (coma o líneas)<textarea id="lc-allow-pubkeys" rows="2" placeholder="pubkey o ruta runs/identity/*.json"></textarea></label>
+                <label class="checkbox span-2"><input id="lc-require-node-identity" type="checkbox" /> Requerir identidad de nodo</label>
+              </div>
+            </div>
+
+            <div class="launcher-card">
+              <div class="launcher-card-head">
+                <h3>Worker</h3>
+                <button id="launch-worker" class="btn btn-primary btn-sm">Lanzar worker</button>
+              </div>
+              <div class="form-grid">
+                <label>Config<input id="lw-config" type="text" value="configs/smoke.json" /></label>
+                <label>Device<input id="lw-device" type="text" value="cpu" placeholder="cpu / cuda" /></label>
+                <label>Node ID<input id="lw-node-id" type="text" value="node-0" /></label>
+                <label>Shard ID<input id="lw-shard-id" type="number" value="0" min="0" /></label>
+                <label class="span-2">Coordinator URL (HTTP)<input id="lw-coordinator" type="text" placeholder="http://host:8095 (o vacío con P2P)" /></label>
+                <label>P2P topic<input id="lw-p2p-topic" type="text" placeholder="diloco-run-..." /></label>
+                <label>Tunnel port<input id="lw-tunnel-port" type="number" value="0" min="0" placeholder="0=auto" /></label>
+                <label>Init state<input id="lw-init-state" type="text" placeholder="auto o runs/init-..." /></label>
+                <label>P2P context<input id="lw-p2p-context" type="text" placeholder="opcional" /></label>
+                <label class="span-2">Node identity<input id="lw-node-identity" type="text" placeholder="runs/identity/node-0.json" /></label>
+                <label class="span-2">Coordinator pubkey<input id="lw-coordinator-pubkey" type="text" placeholder="hex pubkey (o usar invite)" /></label>
+                <label class="span-2">Invite (JSON/path)<input id="lw-invite" type="text" placeholder="runs/invite.json" /></label>
+              </div>
+            </div>
+          </div>
+          <div class="launcher-actions">
+            <button id="save-launcher-config" class="btn btn-ghost btn-sm">Guardar configuración</button>
+            <span id="launcher-config-status" class="panel-meta">no guardado</span>
+          </div>
+        </div>
+
         <div class="table-wrap">
           <table id="procs-table">
-            <thead><tr><th>ID</th><th>PID</th><th>Estado</th><th>Comando</th><th>Acción</th></tr></thead>
-            <tbody></tbody>
+            <thead><tr><th>ID</th><th>PID</th><th>Estado</th><th>Comando</th><th>Log</th><th>Acción</th></tr></thead>
+            <tbody><tr><td colspan="6" class="empty">Sin datos (pulsa Refrescar)</td></tr></tbody>
           </table>
         </div>
       </section>
