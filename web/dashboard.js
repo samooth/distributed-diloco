@@ -43,10 +43,19 @@ function headers() {
 
 async function fetchJson(path) {
   const base = $("url").value.trim().replace(/\/$/, "");
-  const res = await fetch(base + path, { headers: headers() });
+  if (!base) throw new Error("URL del coordinador vacía");
+  let res;
+  try {
+    res = await fetch(base + path, { headers: headers(), cache: "no-store" });
+  } catch (e) {
+    throw new Error(`No se puede conectar al coordinador (${e.message || e})`);
+  }
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${text.slice(0, 200)}`);
+    let text = "";
+    try { text = (await res.text()).slice(0, 180); } catch (_) {}
+    if (res.status === 401) throw new Error("401 no autorizado: revisa el token del coordinador");
+    if (res.status === 403) throw new Error(`403 prohibido: ${text || "identidad/allowlist/política"}`);
+    throw new Error(`${res.status}${text ? " " + text : ""}`);
   }
   return res.json();
 }
@@ -165,6 +174,7 @@ async function refresh() {
     const status = await fetchJson("/v1/status");
     lastStatus = status;
     connected = true;
+    window._lastConnErr = null;
     setPill(health.failure ? "Error" : "Conectado", health.failure ? "pill-err" : "pill-ok");
 
     $("k-round").textContent = `${status.round} / ${status.max_rounds}`;
@@ -231,7 +241,13 @@ async function refresh() {
   } catch (e) {
     connected = false;
     setPill("Error", "pill-err");
-    log(`Error de conexión: ${e.message}`, "err");
+    const msg = e && e.message ? e.message : String(e);
+    log(`Error de conexión: ${msg}`, "err");
+    // avoid spamming toasts every poll tick, but surface first/changed errors
+    if (window._lastConnErr !== msg) {
+      window._lastConnErr = msg;
+      toast(msg, "err", 4500);
+    }
   }
 }
 
