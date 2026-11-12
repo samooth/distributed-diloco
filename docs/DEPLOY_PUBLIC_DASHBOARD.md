@@ -50,7 +50,26 @@ Crear `web/public/` con:
 - Ejecutar agente solo en localhost: `./agent --host 127.0.0.1 --port 8765 --token $(cat /etc/diloco/agent.token)`
 - Servir `web/` existente para el dashboard privado (ya lo hace)
 
-## 5. Configuración del proxy (Caddy)
+## 5. Despliegue con Docker + nginx existente (jonasal/nginx-certbot)
+
+Si ya tienes nginx con `jonasal/nginx-certbot` y red externa `proxy-net`, usa los artefactos listos en `deploy/`:
+
+- `deploy/docker-compose.diloco.yml`: servicios `diloco-coordinator` y `diloco-agent` en `proxy-net` (externa), sin exponer puertos al host.
+- `deploy/nginx/ddiloco.bsv.direct.conf` y `deploy/nginx/dash.ddiloco.bsv.direct.conf`: vhosts compatibles con `user_conf.d` de nginx-certbot.
+- `configs/docker-coordinator.json`: config con `host: 0.0.0.0` y puerto `8095` para red Docker.
+- `deploy/deploy_vps.sh`: sincroniza código/configs, publica `web/public/`, copia vhosts, levanta/actualiza contenedores y recarga nginx.
+- `deploy/README.md`: guía específica de integración.
+
+Ejemplo de despliegue:
+
+```bash
+NGINX_USER_CONF_DIR=/ruta/en/vps/nginx/user_conf.d \
+PUBLIC_WWW_DIR=/var/www/ddiloco.bsv.direct \
+NGINX_CONTAINER=<contenedor-nginx> \
+./deploy/deploy_vps.sh user@vps.tls:/opt/ddiloco
+```
+
+## 6. Configuración del proxy (Caddy alternativo)
 
 Archivo `/etc/caddy/Caddyfile`:
 
@@ -112,37 +131,42 @@ dash.ddiloco.bsv.direct {
 ### Nginx alternativo (resumen)
 Similar con `location /` (estático + proxy público), `location /app/` con `auth_basic` hacia `127.0.0.1:8765`. Caddy es más directo para HTTPS automático con Let's Encrypt.
 
-## 6. Pasos de despliegue
+## 7. Pasos de despliegue
 
 1. **DNS**: Crear registros A/AAAA para `ddiloco.bsv.direct` y `dash.ddiloco.bsv.direct` apuntando al VPS.
 2. **Firewall**: Permitir solo 22, 80, 443. Bloquear puertos del coordinador/agente desde internet.
-3. **Repositorio**: Ya incluye endpoint público `GET /v1/public/status`, página `web/public/` y ejemplos en `deploy/`.
-4. **Proxy**: Copiar/adaptar `deploy/Caddyfile.ddiloco.example` a `/etc/caddy/Caddyfile` (rutas, hash de contraseña) y recargar Caddy.
-5. **Servicios**: Instalar/adaptar `deploy/diloco-coordinator.service.example` y `deploy/diloco-agent.service.example` en systemd. Ejecutar coordinador en localhost; agente en `127.0.0.1` con `--token`.
+3. **Repositorio**: Ya incluye endpoint público `GET /v1/public/status`, página `web/public/`, ejemplos en `deploy/` y compose para `proxy-net`.
+4. **Proxy**:
+   - **nginx-certbot (recomendado si ya lo usas)**: copiar `deploy/nginx/*.conf` a tu `user_conf.d` y publicar `web/public/` en `/var/www/ddiloco.bsv.direct`; o ejecutar `deploy/deploy_vps.sh`.
+   - **Caddy alternativo**: adaptar `deploy/Caddyfile.ddiloco.example`.
+5. **Servicios**:
+   - **Docker**: `deploy/docker-compose.diloco.yml` (coordinador + agente en `proxy-net`).
+   - **systemd alternativo**: `deploy/diloco-coordinator.service.example` y `deploy/diloco-agent.service.example`.
 6. **Verificar**:
    - `curl https://ddiloco.bsv.direct/api/status` devuelve JSON sanitizado (sin auth).
    - `https://dash.ddiloco.bsv.direct` pide autenticación y sirve el dashboard privado.
    - Puertos 8095/8765 no accesibles desde internet.
-7. **Operación**: Rotar tokens/contraseñas, revisar logs, usar invite/identidad según `docs/ONBOARDING.md`.
+7. **Operación**: Rotar tokens/contraseñas (`deploy/.env`, config del coordinador), revisar logs, usar invite/identidad según `docs/ONBOARDING.md`.
 
-## 7. Checklist de seguridad
+## 8. Checklist de seguridad
 
-- [ ] Coordinador/agente escuchan solo en `127.0.0.1`
+- [ ] Coordinador/agente no expuestos directamente a internet (solo localhost/red Docker interna)
 - [ ] Endpoint público NO requiere token y devuelve solo datos agregados
-- [ ] Dashboard privado protegido con auth/VPN
-- [ ] HTTPS habilitado (Let's Encrypt)
-- [ ] Firewall restrictivo
-- [ ] Agente con `--token` configurado
-- [ ] Sin exposición de `/v1/register`, `/v1/update`, `/launch/*` públicamente
-- [ ] Rate limiting habilitado en ruta pública
+- [ ] Dashboard privado protegido con auth/VPN (ideal Tailscale/Cloudflare Access)
+- [ ] HTTPS habilitado (Let's Encrypt vía nginx-certbot/Caddy)
+- [ ] Firewall restrictivo (solo 22,80,443)
+- [ ] Agente con `--token` configurado (`deploy/.env` / systemd env)
+- [ ] Sin exposición de `/v1/register`, `/v1/update`, `/v1/state`, `/launch/*` públicamente
+- [ ] Rate limiting habilitado en ruta pública (si aplica)
 - [ ] Headers de seguridad configurados
 
-## 8. Notas
+## 9. Notas
 
-- Si el coordinador aún no está corriendo, la página pública puede mostrar "sin red activa" graciosamente.
+- Si el coordinador aún no está corriendo, la página pública mostrará "sin datos" correctamente.
 - Para mayor seguridad, usar **Tailscale** para el dashboard privado en lugar de exponerlo a internet (incluso con auth básica).
 - El endpoint público es intencionalmente limitado para evitar filtrar información operativa sensible.
-- Si usas Cloudflare, puedes poner el dashboard detrás de **Cloudflare Access** y mantener todo el tráfico cifrado.
+- Con `jonasal/nginx-certbot`, los certificados se gestionan automáticamente a partir de los `server_name` en `user_conf.d`.
+- `deploy/deploy_vps.sh` no sobrescribe `deploy/.env` remoto; revisa tokens tras el primer despliegue.
 
 ## Referencias
 - [Operaciones](06-operaciones.md)

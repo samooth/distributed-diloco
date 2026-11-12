@@ -1,0 +1,27 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+dist
+build
+runs
+tmp
+.DS_Store
+*.log
+.env
+.env.*
+network/**/node_modules
+# Keep package manifests for optional sidecar install in image
+!network/holepunch-sidecar/package.json
+!network/holepunch-sidecar/package-lock.json
+!network/holepunch-sidecar/yarn.lock
+!network/holepunch-sidecar/pnpm-lock.yaml

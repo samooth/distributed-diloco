@@ -1,0 +1,68 @@
+# DiLoCo services for use with an existing nginx reverse proxy on external network `proxy-net`
+# (e.g. jonasal/nginx-certbot).
+#
+# Usage:
+#   cd /path/to/distributed-diloco/deploy
+#   cp .env.example .env   # edit tokens/secrets
+#   docker compose -f docker-compose.diloco.yml up -d --build
+#
+# Nginx should proxy:
+#   ddiloco.bsv.direct /api/status  -> http://diloco-coordinator:8095/v1/public/status
+#   dash.ddiloco.bsv.direct         -> http://diloco-agent:8765
+#
+# See deploy/nginx/*.conf and docs/DEPLOY_PUBLIC_DASHBOARD.md
+
+services:
+  diloco-coordinator:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: diloco-wan:latest
+    container_name: diloco-coordinator
+    restart: unless-stopped
+    command: >
+      python scripts/run_coordinator.py
+      --config configs/docker-coordinator.json
+      --device cpu
+      --no-resume
+      --no-wait
+      --log-level INFO
+    volumes:
+      - ../configs:/app/configs
+      - diloco_runs:/app/runs
+    expose:
+      - "8095"
+    networks:
+      - proxy-net
+
+  diloco-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: diloco-wan:latest
+    container_name: diloco-agent
+    restart: unless-stopped
+    depends_on:
+      - diloco-coordinator
+    command: >
+      python scripts/agent.py
+      --host 0.0.0.0
+      --port 8765
+      --token ${AGENT_TOKEN:-change-me-agent-token}
+    environment:
+      - AGENT_TOKEN=${AGENT_TOKEN:-change-me-agent-token}
+    volumes:
+      - ../configs:/app/configs
+      - ../web:/app/web
+      - diloco_runs:/app/runs
+    expose:
+      - "8765"
+    networks:
+      - proxy-net
+
+volumes:
+  diloco_runs:
+
+networks:
+  proxy-net:
+    external: true
