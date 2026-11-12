@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ddiloco.bsv.direct — DiLoCo WAN Network Status</title>
-  <meta name="description" content="Estado público de la red DiLoCo WAN en ddiloco.bsv.direct" />
+  <title>didiloco.bsv.direct — DiLoCo WAN Network Status</title>
+  <meta name="description" content="Estado público de la red DiLoCo WAN" id="meta-desc" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
@@ -79,7 +79,7 @@
       <div class="brand">
         <div class="mark">◆</div>
         <div>
-          <h1>ddiloco.bsv.direct</h1>
+          <h1 id="siteHost">didiloco.bsv.direct</h1>
           <p>DiLoCo WAN — estado público de la red</p>
         </div>
       </div>
@@ -137,7 +137,7 @@
     </section>
 
     <footer>
-      <div>ddiloco.bsv.direct · Estado público (sanitizado)</div>
+      <div id="footBrand">didiloco.bsv.direct · Estado público (sanitizado)</div>
       <div id="footMsg" class="muted">Auto-refresh cada 15s</div>
     </footer>
   </div>
@@ -146,6 +146,10 @@
     const params = new URLSearchParams(location.search);
     const API = params.get('api') || '/api/status';
     const REFRESH_MS = 15000;
+    const host = location.host || 'didiloco.bsv.direct';
+    document.title = host + ' — DiLoCo WAN Network Status';
+    document.getElementById('siteHost').textContent = host;
+    document.getElementById('footBrand').textContent = host + ' · Estado público (sanitizado)';
 
     const $ = (id) => document.getElementById(id);
     const fmt = (v, d=4) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);

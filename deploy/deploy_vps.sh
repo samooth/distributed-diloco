@@ -6,31 +6,46 @@ set -euo pipefail
 #
 # This script:
 #   1) Syncs project files needed to build/run DiLoCo containers to the VPS
-#   2) Installs nginx vhost configs into the nginx user_conf.d directory
-#   3) Publishes web/public static files to the nginx web root
+#   2) Publishes web/public static files to the nginx web root
+#   3) Optionally installs nginx vhost config(s) into nginx user_conf.d
 #   4) Ensures docker network `proxy-net` exists
 #   5) Builds/updates DiLoCo containers via docker compose
 #   6) Optionally reloads the nginx container
 #
 # Usage:
-#   ./deploy/deploy_vps.sh user@vps.tls:/path/to/ddiloco
+#   ./deploy/deploy_vps.sh [user@host:/path]
 #
-# Required env (or derived from arg):
-#   DEPLOY_TARGET          user@host (or pass user@host:/path as first arg)
-#   DEPLOY_PATH            Remote path for this repo/compose (e.g. /opt/ddiloco)
+# Defaults (override via env):
+#   DEPLOY_TARGET=space.bsv.direct
+#   DEPLOY_PATH=/opt/didiloco
+#   PUBLIC_WWW_DIR=/var/www/didiloco
 #
 # Optional env:
+#   DEPLOY_TARGET          SSH target (user@host). Also parsed from arg user@host:/path
+#   DEPLOY_PATH            Remote project path
 #   NGINX_USER_CONF_DIR    Remote dir mounted to nginx /etc/nginx/user_conf.d
-#   PUBLIC_WWW_DIR         Remote dir for public static files (default: /var/www/ddiloco.bsv.direct)
-#   NGINX_CONTAINER        Nginx container name/id to reload (optional)
+#   NGINX_CONF_FILES       Space-separated conf filenames from deploy/nginx/ to install
+#                          (e.g. "didiloco.bsv.direct.conf"). Empty = do not install confs.
+#   PUBLIC_WWW_DIR         Remote dir for public static files
+#   NGINX_CONTAINER        Nginx container name/id to test/reload (optional)
 #   COMPOSE_FILE           Remote compose path relative to DEPLOY_PATH (default: deploy/docker-compose.diloco.yml)
 #   DOCKER_NETWORK         External network name (default: proxy-net)
-#   SSH_OPTS               Extra ssh options (default: empty)
+#   SSH_OPTS               Extra ssh options
 #   RSYNC_OPTS             Extra rsync options (default: -az --delete)
-#   DRY_RUN                Set to 1 for rsync dry-run
-#   SKIP_NGINX             Set to 1 to skip nginx conf/static publish
-#   SKIP_CONTAINERS        Set to 1 to skip docker compose up
-#   SKIP_BUILD             Set to 1 to use existing images (no --build)
+#   DRY_RUN                1 = rsync dry-run
+#   SKIP_NGINX             1 = skip nginx conf/static publish
+#   SKIP_CONTAINERS        1 = skip docker compose up
+#   SKIP_BUILD             1 = docker compose up without --build
+#
+# Examples:
+#   # Didiloco (space.bsv.direct) - publish app + public page, install specific vhost, update containers
+#   NGINX_USER_CONF_DIR=/opt/nginx/user_conf.d \
+#   NGINX_CONF_FILES="didiloco.bsv.direct.conf" \
+#   NGINX_CONTAINER=nginx \
+#   ./deploy/deploy_vps.sh space.bsv.direct:/opt/didiloco
+#
+#   # Only update containers (no nginx/static changes)
+#   SKIP_NGINX=1 ./deploy/deploy_vps.sh space.bsv.direct:/opt/didiloco
 #
 # Examples:
 #   DEPLOY_TARGET=user@vps.tls DEPLOY_PATH=/opt/ddiloco \
@@ -55,11 +70,11 @@ if [[ $# -ge 1 ]]; then
   fi
 fi
 
-: "${DEPLOY_TARGET:?Set DEPLOY_TARGET (user@host) or pass user@host:/path}"
-: "${DEPLOY_PATH:?Set DEPLOY_PATH (remote path) or pass user@host:/path}"
-
+DEPLOY_TARGET="${DEPLOY_TARGET:-space.bsv.direct}"
+DEPLOY_PATH="${DEPLOY_PATH:-/opt/didiloco}"
 NGINX_USER_CONF_DIR="${NGINX_USER_CONF_DIR:-}"
-PUBLIC_WWW_DIR="${PUBLIC_WWW_DIR:-/var/www/ddiloco.bsv.direct}"
+NGINX_CONF_FILES="${NGINX_CONF_FILES:-}"
+PUBLIC_WWW_DIR="${PUBLIC_WWW_DIR:-/var/www/didiloco}"
 NGINX_CONTAINER="${NGINX_CONTAINER:-}"
 COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.diloco.yml}"
 DOCKER_NETWORK="${DOCKER_NETWORK:-proxy-net}"
@@ -86,7 +101,12 @@ log "Public www: ${PUBLIC_WWW_DIR}"
 
 # 1) Create remote directories
 log "Creating remote directories"
-"${SSH[@]}" "mkdir -p '$DEPLOY_PATH' '$PUBLIC_WWW_DIR' $( [[ -n "$NGINX_USER_CONF_DIR" ]] && printf '%q' "$NGINX_USER_CONF_DIR" )"
+REMOTE_MKDIR_DIRS=("$DEPLOY_PATH" "$PUBLIC_WWW_DIR")
+if [[ -n "$NGINX_USER_CONF_DIR" && -n "$NGINX_CONF_FILES" ]]; then
+  REMOTE_MKDIR_DIRS+=("$NGINX_USER_CONF_DIR")
+fi
+# shellcheck disable=SC2029
+"${SSH[@]}" "mkdir -p $(printf '%q ' "${REMOTE_MKDIR_DIRS[@]}")"
 
 # 2) Sync project files needed for build/runtime
 log "Syncing project files to ${DEPLOY_TARGET}:${DEPLOY_PATH}"
@@ -135,11 +155,17 @@ log "Ensuring deploy/.env exists on remote (not overwriting)"
 
 # 3) Publish nginx configs and public static files
 if [[ "$SKIP_NGINX" != "1" ]]; then
-  if [[ -n "$NGINX_USER_CONF_DIR" ]]; then
-    log "Publishing nginx configs to ${NGINX_USER_CONF_DIR}"
-    "${RSYNC[@]}" "$ROOT_DIR/deploy/nginx/" "$DEPLOY_TARGET:$NGINX_USER_CONF_DIR/"
+  if [[ -n "$NGINX_USER_CONF_DIR" && -n "$NGINX_CONF_FILES" ]]; then
+    log "Installing nginx config(s) to ${NGINX_USER_CONF_DIR}: ${NGINX_CONF_FILES}"
+    for f in $NGINX_CONF_FILES; do
+      src="$ROOT_DIR/deploy/nginx/$f"
+      [[ -f "$src" ]] || die "nginx conf not found: $src"
+      "${RSYNC[@]}" "$src" "$DEPLOY_TARGET:$NGINX_USER_CONF_DIR/"
+    done
+  elif [[ -n "$NGINX_USER_CONF_DIR" ]]; then
+    log "NGINX_USER_CONF_DIR set but NGINX_CONF_FILES empty; skipping vhost install (configs available at $DEPLOY_PATH/deploy/nginx/ on remote)"
   else
-    log "NGINX_USER_CONF_DIR not set; skipping nginx vhost config copy"
+    log "NGINX_USER_CONF_DIR not set; skipping nginx vhost config install"
   fi
 
   log "Publishing public static files to ${PUBLIC_WWW_DIR}"
@@ -176,11 +202,12 @@ fi
 log "Done."
 echo
 echo "Verify:"
-echo "  curl -sS https://ddiloco.bsv.direct/api/status | jq ."
-echo "  https://dash.ddiloco.bsv.direct"
+echo "  curl -sS https://didiloco.bsv.direct/api/status | jq ."
+echo "  https://didiloco.bsv.direct"
 echo
 echo "Notes:"
-echo "  - Review deploy/.env on the VPS and set a strong AGENT_TOKEN."
-echo "  - Ensure DNS for ddiloco.bsv.direct and dash.ddiloco.bsv.direct points to the VPS."
-echo "  - Ensure nginx-certbot can obtain certificates for both domains."
+echo "  - Review $DEPLOY_PATH/deploy/.env on the VPS and set a strong AGENT_TOKEN."
+echo "  - Ensure DNS for didiloco.bsv.direct points to the VPS."
+echo "  - Nginx: install/adapt deploy/nginx/didiloco.bsv.direct.conf (set NGINX_USER_CONF_DIR and NGINX_CONF_FILES=\"didiloco.bsv.direct.conf\" to auto-install)."
+echo "  - Verify ssl_certificate paths in your vhost match the cert issued for this domain."
 echo "  - Coordinator config for Docker: configs/docker-coordinator.json (host 0.0.0.0, port 8095)."
