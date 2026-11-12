@@ -148,6 +148,7 @@ class Worker:
         timeout: Optional[float] = None,
         extra_headers: Optional[Dict[str, str]] = None,
         allow_partial: bool = False,
+        retry_statuses: Optional[Sequence[int]] = None,
     ) -> tuple[int, bytes, str, Dict[str, str]]:
         url = self.coordinator_url + path
         headers = dict(self._headers())
@@ -157,7 +158,9 @@ class Worker:
             headers["Content-Type"] = content_type
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
         context = self._ssl_context()
-        attempts = 5 if method == "GET" or path in ("/v1/register", "/v1/heartbeat", "/v1/leave") else 1
+        idempotent = method == "GET" or path in ("/v1/register", "/v1/heartbeat", "/v1/leave")
+        attempts = 5 if idempotent else 1
+        retryable_http = set(int(s) for s in (retry_statuses or ())) | ({502, 503, 504} if idempotent else set())
         last_exc: Optional[Exception] = None
         for attempt in range(attempts):
             try:
@@ -176,7 +179,6 @@ class Worker:
                         raise
                     return status, data, response.headers.get_content_type() or "", resp_headers
             except urllib.error.HTTPError as exc:
-                # 416 Range Not Satisfiable etc. should be surfaced to caller
                 raw = exc.read()
                 message = raw.decode("utf-8", errors="replace")
                 try:
@@ -184,6 +186,11 @@ class Worker:
                     message = str(payload.get("error", message))
                 except json.JSONDecodeError:
                     pass
+                if attempt < attempts - 1 and int(exc.code) in retryable_http:
+                    last_exc = CoordinatorError(exc.code, message)
+                    LOG.warning("retryable HTTP %s on %s %s (attempt %s/%s): %s", exc.code, method, path, attempt + 1, attempts, message)
+                    time.sleep(min(1.5 * (attempt + 1), 8.0))
+                    continue
                 raise CoordinatorError(exc.code, message) from exc
             except http.client.IncompleteRead as exc:
                 last_exc = exc
@@ -193,7 +200,10 @@ class Worker:
                 LOG.warning("incomplete read on %s %s (attempt %s/%s): %s bytes, retrying", method, path, attempt + 1, attempts, len(exc.partial))
             except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, TimeoutError) as exc:
                 last_exc = exc
-                LOG.warning("connection error on %s %s (attempt %s/%s): %s", method, path, attempt + 1, attempts, exc)
+                if attempts > 1:
+                    LOG.warning("connection error on %s %s (attempt %s/%s): %s", method, path, attempt + 1, attempts, exc)
+                else:
+                    raise CoordinatorError(0, f"connection error: {exc}") from exc
             except urllib.error.URLError as exc:
                 # URLError may wrap the above; retry for idempotent-ish requests
                 last_exc = exc
@@ -204,6 +214,29 @@ class Worker:
             if attempt < attempts - 1:
                 time.sleep(min(2.0 * (attempt + 1), 8.0))
         raise CoordinatorError(0, f"request failed after {attempts} attempts: {last_exc}") from last_exc
+
+    def _wait_for_round_result(self, submitted_round: int, timeout_s: float = 300.0) -> tuple[Dict[str, Any], Dict[str, torch.Tensor]]:
+        """Wait until coordinator advances past submitted_round, then fetch new state.
+        Used to recover from ambiguous/duplicate update submissions."""
+        deadline = time.time() + max(10.0, float(timeout_s))
+        last_err: Optional[Exception] = None
+        while time.time() < deadline:
+            try:
+                meta = self.get_state_meta()
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                time.sleep(2.0)
+                continue
+            if meta.get("failure"):
+                raise CoordinatorError(503, f"run failed: {meta.get('failure')}")
+            cur = int(meta.get("round", 0) or 0)
+            if cur > int(submitted_round) or bool(meta.get("done")):
+                # fetch state (idempotent; may reuse in-memory if matching)
+                return self.get_state()
+            time.sleep(min(2.0, max(0.2, deadline - time.time())))
+        if last_err:
+            raise CoordinatorError(0, f"timed out waiting for round {submitted_round} result: {last_err}") from last_err
+        raise CoordinatorError(504, f"timed out waiting for round {submitted_round} to complete")
 
     def _download_state_blob_http(self, expected_meta: Optional[Mapping[str, Any]] = None) -> bytes:
         """Download /v1/state with Range-based resume, chunk/manifest verification and idempotent retries."""
@@ -818,84 +851,136 @@ class Worker:
             else:
                 blob = pack_message(payload_meta, upload_state)
                 query = urllib.parse.urlencode({"node_id": self.node_id, "round": round_id})
-                try:
-                    _, raw, _, _ = self._request(
-                        "POST",
-                        f"/v1/update?{query}",
-                        blob,
-                        content_type="application/octet-stream",
-                    )
-                except CoordinatorError as exc:
-                    caught = exc
-                    if exc.status == 409 and "stale round" in str(exc) and stale_retries < 3:
-                        stale_retries += 1
-                        self._append_log(
-                            {
-                                "node_id": self.node_id,
-                                "round": round_id,
-                                "stale_round_retry": stale_retries,
-                                "error": str(exc),
-                            }
+                raw = b""
+                submit_attempts = 0
+                max_submit_attempts = 6
+                submitted_ok = False
+                while submit_attempts < max_submit_attempts and not submitted_ok:
+                    submit_attempts += 1
+                    try:
+                        _, raw, _, _ = self._request(
+                            "POST",
+                            f"/v1/update?{query}",
+                            blob,
+                            content_type="application/octet-stream",
                         )
-                        LOG.warning(
-                            "%s round %s became stale; reloading global state (retry %s/3)",
-                            self.node_id,
-                            round_id,
-                            stale_retries,
-                        )
-                        new_meta, new_state = self.get_state()
-                        if int(new_meta["round"]) <= round_id:
-                            raise
-                        self._residual = None
-                        meta, state = new_meta, clone_state(new_state)
-                        continue
-                    if exc.status == 403 and stale_retries < 3:
-                        stale_retries += 1
-                        try:
-                            self.register()
-                        except CoordinatorError:
-                            pass
-                        try:
+                        submitted_ok = True
+                        break
+                    except CoordinatorError as exc:
+                        caught = exc
+                        msg = str(exc)
+                        # Terminal coordinator/run conditions - never retry as transient
+                        terminal_timeout = exc.status == 504 and ("timed out" in msg or "quorum" in msg)
+                        terminal_run_failed = exc.status == 503 and "run failed" in msg
+                        # Transient transport/proxy failures: retry (idempotent recovery handled below)
+                        if exc.status in (0, 502) or (exc.status in (503, 504) and not terminal_timeout and not terminal_run_failed):
+                            if submit_attempts < max_submit_attempts:
+                                LOG.warning(
+                                    "%s transient submit error round=%s (attempt %s/%s): %s",
+                                    self.node_id, round_id, submit_attempts, max_submit_attempts, exc,
+                                )
+                                time.sleep(min(2.0 * submit_attempts, 10.0))
+                                continue
+                        if exc.status == 409 and "duplicate update" in msg:
+                            LOG.warning("%s duplicate update detected for round %s; waiting for round result", self.node_id, round_id)
+                            try:
+                                new_meta, new_state = self._wait_for_round_result(round_id)
+                            except CoordinatorError as wait_exc:
+                                if submit_attempts < max_submit_attempts:
+                                    LOG.warning("%s could not recover duplicate update yet: %s", self.node_id, wait_exc)
+                                    time.sleep(min(2.0 * submit_attempts, 10.0))
+                                    continue
+                                raise wait_exc
+                            # Synthesize success path
+                            raw = pack_message(new_meta, new_state)
+                            submitted_ok = True
+                            break
+                        if exc.status == 409 and "stale round" in str(exc) and stale_retries < 3:
+                            stale_retries += 1
+                            self._append_log(
+                                {
+                                    "node_id": self.node_id,
+                                    "round": round_id,
+                                    "stale_round_retry": stale_retries,
+                                    "error": str(exc),
+                                }
+                            )
+                            LOG.warning(
+                                "%s round %s became stale; reloading global state (retry %s/3)",
+                                self.node_id,
+                                round_id,
+                                stale_retries,
+                            )
                             new_meta, new_state = self.get_state()
-                        except CoordinatorError:
-                            raise caught
-                        self._residual = None
-                        meta, state = new_meta, clone_state(new_state)
-                        continue
-                    if exc.status == 504 and "timed out" in str(exc):
-                        run_failed = True
+                            if int(new_meta["round"]) <= round_id:
+                                raise
+                            self._residual = None
+                            meta, state = new_meta, clone_state(new_state)
+                            submitted_ok = "stale-continue"  # type: ignore[assignment]
+                            break
+                        if exc.status == 403 and stale_retries < 3:
+                            stale_retries += 1
+                            try:
+                                self.register()
+                            except CoordinatorError:
+                                pass
+                            try:
+                                new_meta, new_state = self.get_state()
+                            except CoordinatorError:
+                                raise caught
+                            self._residual = None
+                            meta, state = new_meta, clone_state(new_state)
+                            submitted_ok = "stale-continue"  # type: ignore[assignment]
+                            break
+                        if exc.status == 504 and "timed out" in str(exc):
+                            run_failed = True
+                            self._append_log(
+                                {
+                                    "node_id": self.node_id,
+                                    "round": round_id,
+                                    "error": str(exc),
+                                    "status": exc.status,
+                                    "quorum_timeout": True,
+                                }
+                            )
+                            LOG.warning("%s: %s", self.node_id, exc)
+                            break
+                        if exc.status == 503 and "run failed" in str(exc):
+                            run_failed = True
+                            self._append_log(
+                                {
+                                    "node_id": self.node_id,
+                                    "round": round_id,
+                                    "error": str(exc),
+                                    "status": exc.status,
+                                }
+                            )
+                            LOG.warning("%s: %s", self.node_id, exc)
+                            break
+                        # 403 "node is not registered" can happen after coordinator restart; retry with re-register
+                        if exc.status == 403 and "not registered" in str(exc) and submit_attempts < max_submit_attempts:
+                            LOG.warning("%s lost registration, re-registering and retrying submit", self.node_id)
+                            try:
+                                self.register()
+                            except Exception:  # noqa: BLE001
+                                pass
+                            time.sleep(min(1.5 * submit_attempts, 6.0))
+                            continue
                         self._append_log(
                             {
                                 "node_id": self.node_id,
                                 "round": round_id,
-                                "error": str(exc),
-                                "status": exc.status,
-                                "quorum_timeout": True,
+                                "error": str(caught),
+                                "status": caught.status,
                             }
                         )
-                        LOG.warning("%s: %s", self.node_id, exc)
-                        break
-                    if exc.status == 503 and "run failed" in str(exc):
-                        run_failed = True
-                        self._append_log(
-                            {
-                                "node_id": self.node_id,
-                                "round": round_id,
-                                "error": str(exc),
-                                "status": exc.status,
-                            }
-                        )
-                        LOG.warning("%s: %s", self.node_id, exc)
-                        break
-                    self._append_log(
-                        {
-                            "node_id": self.node_id,
-                            "round": round_id,
-                            "error": str(caught),
-                            "status": caught.status,
-                        }
-                    )
-                    raise caught
+                        raise caught
+                if run_failed:
+                    break
+                if submitted_ok == "stale-continue":
+                    continue
+                if not submitted_ok:
+                    raise CoordinatorError(0, f"submit failed after {max_submit_attempts} attempts")
             new_meta, new_state = unpack_message(raw)
             self._validate_state(new_meta, new_state)
             rounds_done += 1

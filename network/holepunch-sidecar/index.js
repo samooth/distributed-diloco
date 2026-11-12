@@ -332,55 +332,122 @@ async function tunnelClient() {
   const context = arg('--context', topic)
   if (!listenPort) throw new Error('--listen-port is required')
 
-  let beam
   let mode = 'tunnel-client'
   let transport = 'bitbeam'
   let info = { topic }
+  let ident = null
 
   if (identityFile || peerPubkey) {
     if (!identityFile) throw new Error('--identity required for identity tunnel-client')
     if (!peerPubkey) throw new Error('--peer-pubkey (coordinator pubkey) required for identity tunnel-client')
-    const id = loadIdentityFile(identityFile)
-    if (!id.wif) throw new Error('identity file must include wif for tunnel client')
-    const { PrivateKey, PublicKey } = beamDeps().bsv
-    const from = PrivateKey.fromWif(id.wif)
-    const to = PublicKey.fromString(peerPubkey)
+    ident = loadIdentityFile(identityFile)
+    if (!ident.wif) throw new Error('identity file must include wif for tunnel client')
     mode = 'tunnel-client-id'
     transport = 'bitbeam-identity'
-    info = { topic, context, coordinator_pubkey: peerPubkey, node_pubkey: id.pubkey }
-    console.log(JSON.stringify({ event: 'connecting', mode, ...info, transport }))
-    beam = new BitBeam({ from, to }, { announce: false, context })
+    info = { topic, context, coordinator_pubkey: peerPubkey, node_pubkey: ident.pubkey }
   } else {
     const key = topicToBeamKey(topic)
     info = { topic, key }
-    console.log(JSON.stringify({ event: 'connecting', mode, ...info, transport }))
-    beam = new BitBeam(key, { announce: false })
   }
 
-  await new Promise((resolve, reject) => {
-    const onErr = (e) => { cleanup(); reject(e) }
-    const onConn = () => { cleanup(); resolve() }
-    const cleanup = () => { beam.off('connected', onConn); beam.off('error', onErr) }
-    beam.once('connected', onConn)
-    beam.once('error', onErr)
-    try { beam.resume() } catch {} // trigger _open in streamx/duplex implementations
-  })
-
-  const mux = createMux(beam, null)
-  beam.on('error', (e) => console.error(`${mode} beam error`, e.message))
-  beam.on('close', () => console.error(`${mode} beam closed`))
+  let currentMux = null
+  let currentBeam = null
+  let readyEmitted = false
+  let stopping = false
 
   const server = net.createServer((socket) => {
     try { socket.setNoDelay(true) } catch {}
-    mux.openStream(socket)
+    if (currentMux) {
+      try { currentMux.openStream(socket); return } catch (e) {
+        console.error(`${mode} mux open failed:`, e.message)
+      }
+    }
+    // No active tunnel - fail fast so caller can retry
+    try { socket.destroy() } catch {}
   })
+
   await new Promise((resolve, reject) => {
     server.listen(listenPort, listenHost, () => {
-      console.log(JSON.stringify({ event: 'ready', mode, ...info, transport, listen: `${listenHost}:${listenPort}` }))
+      console.log(JSON.stringify({ event: 'listening', mode, ...info, transport, listen: `${listenHost}:${listenPort}` }))
       resolve()
     })
     server.on('error', reject)
   })
+
+  function createBeam() {
+    if (identityFile || peerPubkey) {
+      const { PrivateKey, PublicKey } = beamDeps().bsv
+      const from = PrivateKey.fromWif(ident.wif)
+      const to = PublicKey.fromString(peerPubkey)
+      return new BitBeam({ from, to }, { announce: false, context })
+    } else {
+      const key = topicToBeamKey(topic)
+      return new BitBeam(key, { announce: false })
+    }
+  }
+
+  async function connectOnce() {
+    const beam = createBeam()
+    currentBeam = beam
+    await new Promise((resolve, reject) => {
+      let settled = false
+      const onErr = (e) => { if (settled) return; settled = true; cleanup(); reject(e) }
+      const onConn = () => { if (settled) return; settled = true; cleanup(); resolve() }
+      const onClose = () => { if (settled) return; settled = true; cleanup(); reject(new Error('beam closed before connect')) }
+      const cleanup = () => {
+        beam.off('connected', onConn); beam.off('error', onErr); beam.off('close', onClose)
+      }
+      beam.once('connected', onConn)
+      beam.once('error', onErr)
+      beam.once('close', onClose)
+      try { beam.resume() } catch (e) { onErr(e) }
+    })
+    const mux = createMux(beam, null)
+    currentMux = mux
+    console.log(JSON.stringify({ event: readyEmitted ? 'reconnected' : 'ready', mode, ...info, transport, listen: `${listenHost}:${listenPort}` }))
+    readyEmitted = true
+
+    const disconnected = new Promise((resolve) => {
+      let done = false
+      const finish = (reason) => {
+        if (done) return
+        done = true
+        try { beam.removeListener('error', onError); beam.removeListener('close', onClose) } catch {}
+        if (currentBeam === beam) currentBeam = null
+        if (currentMux === mux) currentMux = null
+        // destroy any active substreams on this mux
+        try { for (const s of mux.streams.values()) { try { s.destroy() } catch {} } mux.streams.clear() } catch {}
+        console.error(`${mode} beam disconnected: ${reason}`)
+        resolve()
+      }
+      const onError = (e) => finish(e && e.message ? e.message : 'error')
+      const onClose = () => finish('close')
+      beam.on('error', onError)
+      beam.on('close', onClose)
+    })
+    await disconnected
+  }
+
+  ;(async () => {
+    let attempt = 0
+    while (!stopping) {
+      try {
+        console.log(JSON.stringify({ event: attempt === 0 ? 'connecting' : 'reconnecting', mode, ...info, transport, attempt: attempt + 1 }))
+        await connectOnce()
+        attempt = 0 // reset backoff after a successful connection lifecycle
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e)
+        console.error(`${mode} connect error: ${msg}`)
+      }
+      if (stopping) break
+      attempt += 1
+      const delay = Math.min(1000 * Math.pow(1.6, Math.min(attempt, 8)), 15000)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  })().catch((e) => {
+    console.error(`${mode} fatal:`, e && e.message ? e.message : e)
+  })
+
   await new Promise(() => {})
 }
 
