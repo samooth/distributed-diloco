@@ -482,15 +482,33 @@ class Worker:
                 try:
                     client.heartbeat(self.node_id)
                 except Exception as exc:  # noqa: BLE001
-                    if isinstance(exc, CoordinatorError) and exc.status in (403, 410):
-                        return
+                    if isinstance(exc, CoordinatorError):
+                        if exc.status == 410:
+                            return
+                        if exc.status == 403:
+                            # Coordinator may have restarted/lost registration; try to re-register
+                            try:
+                                self.register()
+                                LOG.info("%s re-registered after heartbeat 403", self.node_id)
+                                continue
+                            except Exception as reg_exc:  # noqa: BLE001
+                                LOG.debug("%s heartbeat re-register failed: %s", self.node_id, reg_exc)
+                                return
                     LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
             else:
                 try:
                     self._request("GET", f"/v1/heartbeat?{query}", timeout=10.0)
                 except CoordinatorError as exc:
-                    if exc.status in (403, 410):
+                    if exc.status == 410:
                         return
+                    if exc.status == 403:
+                        try:
+                            self.register()
+                            LOG.info("%s re-registered after heartbeat 403", self.node_id)
+                            continue
+                        except Exception as reg_exc:  # noqa: BLE001
+                            LOG.debug("%s heartbeat re-register failed: %s", self.node_id, reg_exc)
+                            return
                     LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
                 except Exception as exc:  # noqa: BLE001
                     LOG.debug("%s heartbeat failed: %s", self.node_id, exc)
