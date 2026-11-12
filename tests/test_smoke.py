@@ -767,6 +767,67 @@ class LocalhostSmokeTests(unittest.TestCase):
             finally:
                 coord.stop()
 
+    def test_worker_persistent_state_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-state-cache",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4, seed=7),
+                data=DataConfig(num_shards=1, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=1, max_workers=1, quorum=1, max_rounds=1,
+                    checkpoint_dir=tmp, token="", idle_timeout_s=0,
+                ),
+            )
+            state, base_hash, _adapter_meta = initial_adapter_state(config, device="cpu")
+            coord = Coordinator(config, state, base_hash)
+            port = coord.start()
+            cache_dir = Path(tmp) / "state-cache"
+            backend = build_backend(config, shard_id=0, device="cpu")
+            worker = Worker(
+                config,
+                "node-cache",
+                f"http://127.0.0.1:{port}",
+                backend,
+                log_path=str(Path(tmp) / "worker-cache.jsonl"),
+                state_cache_dir=str(cache_dir),
+            )
+            try:
+                worker.register()
+
+                # Force first fetch to go through download path so disk cache is populated
+                # (in-memory state may already match coordinator initial state)
+                mutated = {k: v + 1.0 for k, v in backend.state().items()}
+                worker.backend.load_state(mutated)
+
+                meta1, state1 = worker.get_state(download=True)
+                sh = str(meta1["state_hash"])
+                cache_file = cache_dir / f"{sh}.blob"
+                self.assertTrue(cache_file.is_file(), "expected cached state blob on disk")
+
+                # Make in-memory state different again so worker must not take in-memory shortcut
+                mutated2 = {k: v + 2.0 for k, v in backend.state().items()}
+                worker.backend.load_state(mutated2)
+
+                expected_meta = dict(meta1)
+
+                def fail_download(_self, _expected=None):
+                    raise AssertionError("network download should not be used when cache is valid")
+
+                worker.get_state_meta = lambda: dict(expected_meta)  # type: ignore[assignment]
+                worker._download_state_blob_http = fail_download.__get__(worker, Worker)  # type: ignore[assignment]
+
+                meta2, state2 = worker.get_state(download=True)
+                self.assertEqual(str(meta2.get("state_hash")), sh)
+                self.assertEqual(hash_state(state2), hash_state(state1))
+            finally:
+                try:
+                    worker.leave()
+                except Exception:
+                    pass
+                worker.close()
+                coord.stop()
+
 
 def hashlib_sha256(data: bytes) -> str:
     import hashlib

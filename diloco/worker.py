@@ -5,6 +5,7 @@ import hashlib
 import http.client
 import json
 import logging
+import os
 import threading
 import time
 import urllib.error
@@ -51,6 +52,7 @@ class Worker:
         grpc_target: Optional[str] = None,
         init_state_path: Optional[str] = None,
         node_identity_path: Optional[str] = None,
+        state_cache_dir: Optional[str] = None,
     ) -> None:
         self.config = config
         self.node_id = str(node_id)
@@ -60,6 +62,7 @@ class Worker:
         self.init_state_path = Path(init_state_path) if init_state_path else None
         self.node_identity_path = Path(node_identity_path) if node_identity_path else None
         self.node_identity: Optional[Dict[str, Any]] = self._load_identity(self.node_identity_path)
+        self.state_cache_dir = Path(state_cache_dir).expanduser().resolve() if state_cache_dir else (Path("runs") / "state-cache")
         self._grpc: Optional[GrpcWorkerClient] = None
         self.log_path = Path(log_path) if log_path else None
         if self.log_path is not None:
@@ -518,6 +521,63 @@ class Worker:
             "adapter_meta": status.get("adapter_meta", {}),
         }
 
+    def _state_cache_path(self, state_hash: str) -> Path:
+        safe = "".join(c for c in str(state_hash) if c.isalnum() or c in "-_")[:128] or "state"
+        return self.state_cache_dir / f"{safe}.blob"
+
+    def _load_cached_state_blob(self, expected_meta: Mapping[str, Any]) -> Optional[bytes]:
+        state_hash = str(expected_meta.get("state_hash", "") or "")
+        if not state_hash:
+            return None
+        path = self._state_cache_path(state_hash)
+        if not path.is_file():
+            return None
+        try:
+            blob = path.read_bytes()
+        except Exception:  # noqa: BLE001
+            return None
+        expected_blob_hash = str(expected_meta.get("state_blob_hash", "") or "")
+        if expected_blob_hash and hash_blob(blob) != expected_blob_hash:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+        try:
+            meta, state = unpack_message(blob)
+        except Exception:  # noqa: BLE001
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+        if str(meta.get("config_hash", "")) != self.config.fingerprint():
+            return None
+        if str(meta.get("base_hash", "")) != self.backend.base_fingerprint():
+            return None
+        if str(meta.get("state_hash", "")) != state_hash or hash_state(state) != state_hash:
+            return None
+        chunk_hashes = list(expected_meta.get("state_blob_chunk_hashes") or [])
+        chunk_size = int(expected_meta.get("state_blob_chunk_size", 0) or 0)
+        if chunk_hashes and chunk_size > 0:
+            got = [hashlib.sha256(blob[i:i + chunk_size]).hexdigest() for i in range(0, len(blob), chunk_size)]
+            if got != [str(h) for h in chunk_hashes]:
+                return None
+        LOG.info("%s loaded state from local cache (%s)", self.node_id, state_hash[:12])
+        return blob
+
+    def _save_cached_state_blob(self, state_hash: str, blob: bytes) -> None:
+        if not state_hash or not blob:
+            return
+        try:
+            self.state_cache_dir.mkdir(parents=True, exist_ok=True)
+            path = self._state_cache_path(state_hash)
+            tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+            tmp.write_bytes(blob)
+            os.replace(tmp, path)
+        except Exception as exc:  # noqa: BLE001
+            LOG.debug("%s could not save state cache (%s): %s", self.node_id, str(state_hash)[:12], exc)
+
     def _load_local_init_state(self) -> Optional[tuple[Dict[str, Any], Dict[str, torch.Tensor]]]:
         if not self.init_state_path:
             return None
@@ -566,19 +626,28 @@ class Worker:
 
         client = self._get_grpc_client()
         if client is not None:
-            # If server exposes state_meta, reuse in-memory state when identical (idempotent)
+            # If server exposes state_meta, reuse in-memory or disk-cached state when identical
+            expected_meta: Optional[Dict[str, Any]] = None
             if hasattr(client, "get_state_meta"):
                 try:
-                    remote = client.get_state_meta(self.node_id)
-                    if self._current_state_matches_meta(remote):
+                    expected_meta = client.get_state_meta(self.node_id)
+                    if self._current_state_matches_meta(expected_meta):
                         state = self.backend.state()
-                        # remote may not include full adapter_meta; keep it best-effort
-                        return dict(remote), clone_state(state)
+                        return dict(expected_meta), clone_state(state)
                 except Exception:  # noqa: BLE001
-                    pass
+                    expected_meta = None
+            if expected_meta:
+                cached = self._load_cached_state_blob(expected_meta)
+                if cached is not None:
+                    meta, state = unpack_message(cached)
+                    self._validate_state(meta, state)
+                    return meta, clone_state(state)
             raw = client.get_state(self.node_id)
             meta, state = unpack_message(raw)
             self._validate_state(meta, state)
+            state_hash = str(meta.get("state_hash", "") or "")
+            if state_hash:
+                self._save_cached_state_blob(state_hash, raw)
             return meta, clone_state(state)
 
         # HTTP: try resumable/chunked download when blob metadata is available
@@ -598,9 +667,20 @@ class Worker:
             )
             return dict(expected_meta), clone_state(self.backend.state())
 
+        # Persistent cache: reuse downloaded blob for this state_hash if available
+        if expected_meta:
+            cached = self._load_cached_state_blob(expected_meta)
+            if cached is not None:
+                meta, state = unpack_message(cached)
+                self._validate_state(meta, state)
+                return meta, clone_state(state)
+
         raw = self._download_state_blob_http(expected_meta)
         meta, state = unpack_message(raw)
         self._validate_state(meta, state)
+        state_hash = str(meta.get("state_hash", "") or "")
+        if state_hash:
+            self._save_cached_state_blob(state_hash, raw)
         return meta, clone_state(state)
 
     def _validate_state(

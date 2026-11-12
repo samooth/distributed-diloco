@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log", default="")
     parser.add_argument("--grpc-target", help="host:port for transport='grpc'")
     parser.add_argument("--init-state", default="", help="local adapter bundle from export_initial_state.py; skips downloading global state when hash matches")
+    parser.add_argument("--state-cache-dir", default="", help="directorio local para cache persistente de blobs de estado por hash (default: runs/state-cache)")
     parser.add_argument("--node-identity", default="", help="path to BSV identity JSON (pubkey/wif)")
     parser.add_argument("--invite", default="", help="path to coordinator join invite JSON")
     parser.add_argument("--tls-cert", default="")
@@ -159,6 +160,12 @@ def main() -> int:
         if not init_path.is_absolute():
             init_path = (PROJECT_ROOT / init_path).resolve()
         init_state = str(init_path)
+    state_cache_dir = (getattr(args, "state_cache_dir", "") or "").strip()
+    if state_cache_dir:
+        sc_path = Path(state_cache_dir)
+        if not sc_path.is_absolute():
+            sc_path = (PROJECT_ROOT / sc_path).resolve()
+        state_cache_dir = str(sc_path)
     worker = Worker(
         cfg,
         args.node_id,
@@ -168,6 +175,7 @@ def main() -> int:
         grpc_target=grpc_target,
         init_state_path=(init_state and init_state != "auto") and init_state or None,
         node_identity_path=node_identity or None,
+        state_cache_dir=state_cache_dir or None,
     )
     try:
         summary = worker.run()
