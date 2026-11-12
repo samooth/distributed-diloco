@@ -1,17 +1,63 @@
 .topology {
-  display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 24px 16px;
+  position: relative;
 }
 .topo-coord {
-  background: var(--accent); color: #fff; padding: 12px 20px; border-radius: var(--radius);
-  font-weight: 700; box-shadow: 0 0 24px rgba(31,111,235,0.3);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  padding: 14px 22px;
+  border-radius: var(--radius);
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(31,111,235,0.25);
+  text-align: center;
+  min-width: 220px;
 }
+.topo-coord .node-name { display: block; font-weight: 700; }
+.topo-coord .node-meta { display: block; font-size: 0.75rem; opacity: 0.9; margin-top: 2px; font-weight: 500; }
 .topo-nodes {
-  display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  max-width: 900px;
+  position: relative;
+}
+.topo-nodes::before {
+  content: "";
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  width: 2px;
+  height: 18px;
+  background: linear-gradient(to bottom, var(--accent), rgba(148,163,184,0.3));
+  transform: translateX(-50%);
 }
 .topo-node {
-  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 10px 14px; font-size: 0.85rem; min-width: 120px; text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  min-width: 140px;
+  text-align: center;
+  box-shadow: 0 6px 18px rgba(15,23,42,0.04);
 }
-.topo-node.active { border-color: var(--success); box-shadow: 0 0 12px rgba(22,163,74,0.2); }
+body.dark .topo-node { box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
+.topo-node.active {
+  border-color: rgba(22,163,74,0.45);
+  box-shadow: 0 0 0 1px rgba(22,163,74,0.12), 0 8px 20px rgba(22,163,74,0.08);
+}
 .topo-node .node-name { font-weight: 600; display: block; }
-.topo-node .node-meta { font-size: 0.7rem; color: var(--muted); }
+.topo-node .node-meta { font-size: 0.72rem; color: var(--muted); margin-top: 2px; display: block; }
+.topo-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 10px 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}

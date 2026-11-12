@@ -23,8 +23,20 @@ function headers() {
 
 async function fetchJson(path, base) {
   const b = (base || $("coord-url").value.trim()).replace(/\/$/, "");
-  const res = await fetch(b + path, { headers: headers() });
-  if (!res.ok) throw new Error(`${res.status}`);
+  if (!b) throw new Error("URL del coordinador vacía");
+  let res;
+  try {
+    res = await fetch(b + path, { headers: headers(), cache: "no-store" });
+  } catch (e) {
+    throw new Error(`No se puede conectar (${e.message || e})`);
+  }
+  if (!res.ok) {
+    let text = "";
+    try { text = (await res.text()).slice(0, 150); } catch (_) {}
+    if (res.status === 401) throw new Error("401 no autorizado: revisa el token");
+    if (res.status === 403) throw new Error(`403 prohibido: ${text || "identidad/allowlist"}`);
+    throw new Error(`${res.status}${text ? " " + text : ""}`);
+  }
   return res.json();
 }
 
@@ -45,40 +57,64 @@ async function refreshCoord() {
     $("k-round").textContent = `${status.round}/${status.max_rounds}`;
     $("k-pending").textContent = status.pending_updates.length;
     $("k-quorum").textContent = status.quorum;
-    $("k-state").textContent = status.finished ? "finalizado" : "en curso";
-    $("topo-meta").textContent = `${status.registered.length} nodos · ronda ${status.round}`;
+    $("k-state").textContent = status.finished ? "finalizado" : (health.failure ? "error" : "en curso");
+    const short = (s, n = 10) => (s ? String(s).slice(0, n) : "");
+    const meta = [`${status.registered.length} nodos`, `ronda ${status.round}`];
+    if (status.run_id) meta.push(`run ${status.run_id}`);
+    if (status.config_hash) meta.push(`cfg ${short(status.config_hash, 10)}`);
+    $("topo-meta").textContent = meta.join(" · ");
 
     // topology
     const coord = $("topo-coord");
-    coord.textContent = `Coordinador (ronda ${status.round})`;
+    coord.innerHTML = `<span class="node-name">Coordinador</span><span class="node-meta">ronda ${status.round}/${status.max_rounds} · ${status.finished ? "finalizado" : "activo"}</span>`;
     const nodesEl = $("topo-nodes");
     nodesEl.innerHTML = "";
-    status.registered.forEach((n) => {
-      const div = document.createElement("div");
-      div.className = "topo-node active";
-      div.innerHTML = `<span class="node-name">${escapeHtml(n)}</span><span class="node-meta">shard ${status.registered.indexOf(n)}</span>`;
-      nodesEl.appendChild(div);
-    });
+    if (!status.registered || status.registered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "topo-empty";
+      empty.textContent = "Sin nodos registrados";
+      nodesEl.appendChild(empty);
+    } else {
+      status.registered.forEach((n, i) => {
+        const div = document.createElement("div");
+        div.className = "topo-node active";
+        div.innerHTML = `<span class="node-name">${escapeHtml(n)}</span><span class="node-meta">worker #${i}</span>`;
+        nodesEl.appendChild(div);
+      });
+    }
 
     // nodes table
     const nt = document.querySelector("#nodes-table tbody");
     nt.innerHTML = "";
-    status.registered.forEach((n, i) => {
+    if (!status.registered || status.registered.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="mono">${escapeHtml(n)}</td><td><span class="pill pill-ok">activo</span></td><td>${i}</td>`;
+      tr.innerHTML = `<td colspan="3" class="empty">Sin nodos registrados</td>`;
       nt.appendChild(tr);
-    });
-    $("nodes-count").textContent = status.registered.length;
+    } else {
+      status.registered.forEach((n, i) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="mono">${escapeHtml(n)}</td><td><span class="pill pill-ok">activo</span></td><td>${i}</td>`;
+        nt.appendChild(tr);
+      });
+    }
+    $("nodes-count").textContent = (status.registered || []).length;
 
     // rounds table
     const rt = document.querySelector("#rounds-table tbody");
     rt.innerHTML = "";
-    (status.history || []).slice().reverse().forEach((r) => {
+    const hist = status.history || [];
+    if (hist.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="mono">${r.round}</td><td>${(r.nodes || []).length}</td><td class="mono">${Number(r.train_loss).toFixed(4)}</td><td class="mono">${Number(r.sync_seconds).toFixed(2)}</td>`;
+      tr.innerHTML = `<td colspan="4" class="empty">Sin rondas registradas</td>`;
       rt.appendChild(tr);
-    });
-    $("rounds-count").textContent = (status.history || []).length;
+    } else {
+      hist.slice().reverse().forEach((r) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="mono">${r.round}</td><td>${(r.nodes || []).length}</td><td class="mono">${Number(r.train_loss).toFixed(4)}</td><td class="mono">${Number(r.sync_seconds).toFixed(2)}</td>`;
+        rt.appendChild(tr);
+      });
+    }
+    $("rounds-count").textContent = hist.length;
   } catch (e) {
     connected = false;
     setPill("Error", "pill-err");
