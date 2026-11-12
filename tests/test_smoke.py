@@ -100,6 +100,7 @@ class LocalhostSmokeTests(unittest.TestCase):
             )
             calls: List[tuple[str, str]] = []
             submit_count = 0
+            state_calls = 0
 
             def blob(round_index: int, done: bool) -> bytes:
                 meta = {
@@ -115,25 +116,46 @@ class LocalhostSmokeTests(unittest.TestCase):
                 }
                 return pack_message(meta, state)
 
+            def meta_json(round_index: int, done: bool) -> bytes:
+                meta = {
+                    "round": round_index,
+                    "global_step": round_index * config.train.H,
+                    "H": config.train.H,
+                    "max_rounds": config.coordinator.max_rounds,
+                    "done": done,
+                    "state_hash": hash_state(state),
+                    "base_hash": base_hash,
+                    "config_hash": config.fingerprint(),
+                    "adapter_meta": adapter_meta,
+                }
+                return json.dumps(meta).encode("utf-8")
+
             def fake_request(
                 method: str,
                 path: str,
                 body: bytes | None = None,
                 content_type: str = "application/json",
                 timeout: float | None = None,
-            ) -> tuple[int, bytes, str]:
-                nonlocal submit_count
+                extra_headers: Dict[str, str] | None = None,
+                allow_partial: bool = False,
+            ) -> tuple[int, bytes, str, Dict[str, str]]:
+                nonlocal submit_count, state_calls
                 calls.append((method, path))
+                if path.startswith("/v1/state_meta"):
+                    # first fetch: round 0; after stale retry worker fetches state again -> round 1
+                    round_index = 0 if state_calls == 0 else 1
+                    return 200, meta_json(round_index, False), "application/json", {}
                 if path.startswith("/v1/state"):
-                    round_index = 0 if sum(c[0] == "GET" for c in calls) == 1 else 1
-                    return 200, blob(round_index, False), "application/octet-stream"
+                    state_calls += 1
+                    round_index = 0 if state_calls == 1 else 1
+                    return 200, blob(round_index, False), "application/octet-stream", {}
                 if path.startswith("/v1/update"):
                     submit_count += 1
                     if submit_count == 1:
                         raise CoordinatorError(409, "stale round 0; current round is 1")
-                    return 200, blob(2, True), "application/octet-stream"
+                    return 200, blob(2, True), "application/octet-stream", {}
                 if path.startswith("/v1/leave"):
-                    return 200, b'{"ok":true,"removed":true}', "application/json"
+                    return 200, b'{"ok":true,"removed":true}', "application/json", {}
                 raise AssertionError(f"unexpected request: {method} {path}")
 
             worker._request = fake_request  # type: ignore[method-assign]

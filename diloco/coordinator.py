@@ -78,6 +78,7 @@ class Coordinator:
         self.round_index = int(start_round)
         self.global_step = self.round_index * int(config.train.H)
         self._state_hash = hash_state(self.global_state)
+        self._state_blob_cache: Optional[Dict[str, Any]] = None
         self.registered: Dict[str, Dict[str, Any]] = {}
         self.known_nodes: set[str] = set()
         self.updates: Dict[str, Dict[str, Any]] = {}
@@ -148,15 +149,20 @@ class Coordinator:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def _send_bytes(self, status: int, body: bytes, content_type: str) -> None:
+            def _send_bytes(self, status: int, body: bytes, content_type: str, extra_headers: Optional[Dict[str, str]] = None) -> None:
                 self.send_response(status)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Headers", "X-DiLoCo-Token, Content-Type")
+                self.send_header("Access-Control-Allow-Headers", "X-DiLoCo-Token, Content-Type, Range")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Accept-Ranges", "bytes")
+                if extra_headers:
+                    for k, v in extra_headers.items():
+                        self.send_header(k, v)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                if self.command != "HEAD":
+                    self.wfile.write(body)
 
             def do_OPTIONS(self) -> None:
                 self.send_response(204)
@@ -230,6 +236,42 @@ class Coordinator:
                     if route == "/v1/state":
                         node_id = self._query().get("node_id", "")
                         blob = coordinator.get_state(node_id)
+                        range_header = self.headers.get("Range", "")
+                        if range_header:
+                            if not range_header.startswith("bytes="):
+                                raise ApiError(416, "invalid range unit")
+                            spec = range_header[len("bytes="):].strip()
+                            if "," in spec:
+                                raise ApiError(416, "multiple ranges not supported")
+                            try:
+                                start_s, end_s = spec.split("-", 1)
+                                if start_s == "":
+                                    # suffix range: last N bytes
+                                    suffix = int(end_s)
+                                    if suffix <= 0:
+                                        raise ValueError
+                                    start = max(0, len(blob) - suffix)
+                                    end = len(blob) - 1
+                                else:
+                                    start = int(start_s)
+                                    end = int(end_s) if end_s else len(blob) - 1
+                            except Exception as exc:  # noqa: BLE001
+                                raise ApiError(416, "invalid byte range") from exc
+                            if start < 0 or end < start or start >= len(blob):
+                                self.send_response(416)
+                                self.send_header("Content-Range", f"bytes */{len(blob)}")
+                                self.send_header("Content-Length", "0")
+                                self.end_headers()
+                                return
+                            end = min(end, len(blob) - 1)
+                            chunk = blob[start : end + 1]
+                            self._send_bytes(
+                                206,
+                                chunk,
+                                "application/octet-stream",
+                                extra_headers={"Content-Range": f"bytes {start}-{end}/{len(blob)}"},
+                            )
+                            return
                         self._send_bytes(200, blob, "application/octet-stream")
                         return
                     raise ApiError(404, f"unknown route: {route}")
@@ -373,8 +415,14 @@ class Coordinator:
             self.registration_thread = None
 
     # --------------------------------------------------------------- protocol
-    def _state_meta_locked(self) -> Dict[str, Any]:
-        return {
+    def _invalidate_state_blob_locked(self) -> None:
+        self._state_blob_cache = None
+
+    def _ensure_state_blob_locked(self) -> Dict[str, Any]:
+        cache = self._state_blob_cache
+        if cache and cache.get("state_hash") == self._state_hash and cache.get("round") == int(self.round_index):
+            return cache
+        meta = {
             "round": int(self.round_index),
             "global_step": int(self.global_step),
             "H": int(self.config.train.H),
@@ -385,6 +433,24 @@ class Coordinator:
             "config_hash": self.config.fingerprint(),
             "adapter_meta": self.adapter_meta,
         }
+        blob = pack_state(meta, self.global_state)
+        cache = {
+            "round": int(self.round_index),
+            "state_hash": self._state_hash,
+            "blob": blob,
+            "blob_hash": hash_blob(blob),
+            "blob_size": len(blob),
+            "meta": meta,
+        }
+        self._state_blob_cache = cache
+        return cache
+
+    def _state_meta_locked(self) -> Dict[str, Any]:
+        blob_info = self._ensure_state_blob_locked()
+        meta = dict(blob_info["meta"])
+        meta["state_blob_hash"] = blob_info["blob_hash"]
+        meta["state_blob_bytes"] = int(blob_info["blob_size"])
+        return meta
 
     def state_meta(self) -> Dict[str, Any]:
         with self.cond:
@@ -505,7 +571,7 @@ class Coordinator:
                 raise ApiError(503, f"run failed: {self.failure}")
             self.registered[node_id]["last_seen"] = time.time()
             self.last_activity = time.time()
-            return pack_state(self._state_meta_locked(), self.global_state)
+            return self._ensure_state_blob_locked()["blob"]
 
     def submit(
         self,
@@ -593,7 +659,7 @@ class Coordinator:
                     raise ApiError(504, self.failure)
                 if self.round_index == round_id and not self.finished:
                     raise ApiError(503, "round did not complete")
-            return pack_state(self._state_meta_locked(), self.global_state)
+            return self._ensure_state_blob_locked()["blob"]
 
     def _require_node_locked(self, node_id: str) -> None:
         if not node_id or node_id not in self.registered:
@@ -617,6 +683,7 @@ class Coordinator:
         self.round_index += 1
         self.global_step = self.round_index * int(self.config.train.H)
         self._state_hash = hash_state(self.global_state)
+        self._invalidate_state_blob_locked()
         metrics: Dict[str, Any] = {
             "round": round_id,
             "new_round": self.round_index,

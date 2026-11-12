@@ -27,7 +27,7 @@ except RuntimeError:  # grpcio is optional
 from .compression import compress_state, decompress_state
 from .checkpoint import load_initial_state
 from .config import ExperimentConfig
-from .protocol import pack_message, unpack_message
+from .protocol import hash_blob, pack_message, unpack_message
 from .tensor_utils import clone_state, global_norm, hash_state, scale_state, subtract_state
 
 LOG = logging.getLogger("diloco.worker")
@@ -145,9 +145,13 @@ class Worker:
         body: Optional[bytes] = None,
         content_type: str = "application/json",
         timeout: Optional[float] = None,
-    ) -> tuple[int, bytes, str]:
+        extra_headers: Optional[Dict[str, str]] = None,
+        allow_partial: bool = False,
+    ) -> tuple[int, bytes, str, Dict[str, str]]:
         url = self.coordinator_url + path
-        headers = self._headers()
+        headers = dict(self._headers())
+        if extra_headers:
+            headers.update(extra_headers)
         if body is not None:
             headers["Content-Type"] = content_type
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
@@ -161,8 +165,17 @@ class Worker:
                     timeout=self._timeout if timeout is None else timeout,
                     context=context,
                 ) as response:
-                    return int(response.status), response.read(), response.headers.get_content_type()
+                    status = int(response.status)
+                    resp_headers = {k: v for k, v in response.headers.items()}
+                    try:
+                        data = response.read()
+                    except http.client.IncompleteRead as exc:
+                        if allow_partial and exc.partial:
+                            return status, bytes(exc.partial), response.headers.get_content_type() or "", resp_headers
+                        raise
+                    return status, data, response.headers.get_content_type() or "", resp_headers
             except urllib.error.HTTPError as exc:
+                # 416 Range Not Satisfiable etc. should be surfaced to caller
                 raw = exc.read()
                 message = raw.decode("utf-8", errors="replace")
                 try:
@@ -173,6 +186,9 @@ class Worker:
                 raise CoordinatorError(exc.code, message) from exc
             except http.client.IncompleteRead as exc:
                 last_exc = exc
+                if allow_partial and exc.partial:
+                    # Caller will decide how to resume
+                    return 200, bytes(exc.partial), "", {}
                 LOG.warning("incomplete read on %s %s (attempt %s/%s): %s bytes, retrying", method, path, attempt + 1, attempts, len(exc.partial))
             except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, TimeoutError) as exc:
                 last_exc = exc
@@ -187,6 +203,78 @@ class Worker:
             if attempt < attempts - 1:
                 time.sleep(min(2.0 * (attempt + 1), 8.0))
         raise CoordinatorError(0, f"request failed after {attempts} attempts: {last_exc}") from last_exc
+
+    def _download_state_blob_http(self, expected_meta: Optional[Mapping[str, Any]] = None) -> bytes:
+        """Download /v1/state with Range-based resume and optional blob hash verification."""
+        query = urllib.parse.urlencode({"node_id": self.node_id})
+        path = f"/v1/state?{query}"
+        expected_hash = str((expected_meta or {}).get("state_blob_hash", "") or "")
+        expected_size = int((expected_meta or {}).get("state_blob_bytes", 0) or 0)
+        chunk_size = 8 * 1024 * 1024
+        if expected_size <= 0 or expected_size <= chunk_size:
+            # Small/unknown: single request (keeps compatibility/simple path)
+            _, raw, _, _ = self._request("GET", path)
+            if expected_hash and hash_blob(raw) != expected_hash:
+                raise CoordinatorError(0, "state blob hash mismatch")
+            return raw
+
+        buf = bytearray()
+        offset = 0
+        attempts = 0
+        max_attempts = 20
+        while offset < expected_size and attempts < max_attempts:
+            end = min(expected_size - 1, offset + chunk_size - 1)
+            try:
+                status, data, _, resp_headers = self._request(
+                    "GET",
+                    path,
+                    extra_headers={"Range": f"bytes={offset}-{end}"},
+                    allow_partial=True,
+                )
+            except CoordinatorError as exc:
+                attempts += 1
+                if exc.status == 416:
+                    # If server reports mismatch, restart from scratch once
+                    if offset > 0:
+                        LOG.warning("%s range not satisfiable at offset %s, restarting state download", self.node_id, offset)
+                        buf.clear()
+                        offset = 0
+                        continue
+                LOG.warning("%s state chunk download failed (attempt %s): %s", self.node_id, attempts, exc)
+                time.sleep(min(1.5 * attempts, 8.0))
+                continue
+            except Exception as exc:  # noqa: BLE001
+                attempts += 1
+                LOG.warning("%s state chunk download error (attempt %s): %s", self.node_id, attempts, exc)
+                time.sleep(min(1.5 * attempts, 8.0))
+                continue
+
+            if status == 200:
+                # Server ignored Range or returned full blob; accept if complete and valid
+                if data and offset == 0:
+                    if expected_hash and hash_blob(data) != expected_hash:
+                        attempts += 1
+                        LOG.warning("%s full state blob hash mismatch (attempt %s)", self.node_id, attempts)
+                        continue
+                    return data
+                attempts += 1
+                continue
+            if status != 206 or not data:
+                attempts += 1
+                continue
+            # Accept partial chunk (may be shorter than requested due to IncompleteRead recovery)
+            buf.extend(data)
+            offset += len(data)
+            attempts = 0  # progress made
+            if offset >= expected_size:
+                break
+
+        if offset < expected_size:
+            raise CoordinatorError(0, f"incomplete state download ({offset}/{expected_size} bytes)")
+        blob = bytes(buf[:expected_size])
+        if expected_hash and hash_blob(blob) != expected_hash:
+            raise CoordinatorError(0, "state blob hash mismatch after resumable download")
+        return blob
 
     def register(self) -> Dict[str, Any]:
         pubkey = str((self.node_identity or {}).get("pubkey", "")).strip()
@@ -236,7 +324,7 @@ class Worker:
                         base_hash=self.backend.base_fingerprint(),
                     )
         body = json.dumps(body_dict).encode("utf-8")
-        status, raw, _ = self._request("POST", "/v1/register", body)
+        status, raw, _, _ = self._request("POST", "/v1/register", body)
         payload = json.loads(raw.decode("utf-8"))
         if status != 200 or not payload.get("ok"):
             raise CoordinatorError(status, f"registration rejected: {payload}")
@@ -287,13 +375,13 @@ class Worker:
             return client.get_state_meta(self.node_id)
         query = urllib.parse.urlencode({"node_id": self.node_id})
         try:
-            _, raw, _ = self._request("GET", f"/v1/state_meta?{query}")
+            _, raw, _, _ = self._request("GET", f"/v1/state_meta?{query}")
             return json.loads(raw.decode("utf-8"))
         except CoordinatorError as exc:
             if exc.status != 404:
                 raise
         # Fallback for older coordinators: use /v1/status (small)
-        _, raw, _ = self._request("GET", "/v1/status")
+        _, raw, _, _ = self._request("GET", "/v1/status")
         status = json.loads(raw.decode("utf-8"))
         return {
             "round": int(status.get("round", 0)),
@@ -344,8 +432,13 @@ class Worker:
             meta, state = unpack_message(raw)
             self._validate_state(meta, state)
             return meta, clone_state(state)
-        query = urllib.parse.urlencode({"node_id": self.node_id})
-        _, raw, _ = self._request("GET", f"/v1/state?{query}")
+        # HTTP: try resumable/chunked download when blob metadata is available
+        expected_meta: Optional[Dict[str, Any]] = None
+        try:
+            expected_meta = self.get_state_meta()
+        except Exception as exc:  # noqa: BLE001
+            LOG.debug("%s could not fetch state_meta before download: %s", self.node_id, exc)
+        raw = self._download_state_blob_http(expected_meta)
         meta, state = unpack_message(raw)
         self._validate_state(meta, state)
         return meta, clone_state(state)
@@ -599,7 +692,7 @@ class Worker:
                 blob = pack_message(payload_meta, upload_state)
                 query = urllib.parse.urlencode({"node_id": self.node_id, "round": round_id})
                 try:
-                    _, raw, _ = self._request(
+                    _, raw, _, _ = self._request(
                         "POST",
                         f"/v1/update?{query}",
                         blob,

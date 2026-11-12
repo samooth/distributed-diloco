@@ -39,7 +39,7 @@ Objetivo: que el proyecto se perciba “kickass” desde el primer contacto: est
 ## 2. Robustez WAN y transporte (PRIORIDAD 2)
 Objetivo: entrenamiento estable sobre internet real (NAT, cortes, latencia variable).
 
-- [ ] **Estado chunked + reanudable + verificado**: descarga de `/v1/state` (y artefactos) por chunks con hash por bloque/manifiesto (SHA256/Merkle), HTTP Range/reanudación, idempotencia por `round+state_hash`.
+- [~] **Estado chunked + reanudable + verificado**: descarga de `/v1/state` por chunks con HTTP Range/reanudación y verificación de hash de blob (`state_blob_hash/state_blob_bytes` en `state_meta`, cache de blob en coordinador, reintentos/resume en worker HTTP). Pendiente: hash por bloque/manifiesto (Merkle), idempotencia estricta por `round+state_hash` en todos los caminos, soporte equivalente en gRPC, artefactos/checkpoints.
 - [ ] **Compresión negociada**: `zstd`/codecs para bootstrap y deltas; medir bytes on-wire y `sync_fraction`.
 - [ ] **Reconexión automática E2E**: backoff+jitter en worker y sidecar bitbeam, re-discovery, re-registro/heartbeat, reanudación idempotente (recuperación ≤ 2 rondas).
 - [ ] **Validación NAT/Internet**: E2E multi-máquina (topic y túnel por par), métricas de conexión (TTFB, reconexiones, fallos DHT), fallback coordinado.
@@ -127,4 +127,5 @@ Objetivo: convertir la red en infraestructura colaborativa verificable.
 - 2026-11-12 (visual, dashboard/landing): actualización de `web/index.html` (hero/estado actual, CTA a console/estado público, copy BSV+bitbeam) y pulido de `web/dashboard.css` (limpieza de artefactos, estilo más consistente/premium); **deploy** de archivos web al VPS.
 - 2026-11-12 (visual, console): mejoras en `web/dashboard.*` — launcher con formularios configurables y persistentes (coordinador/worker, identidad/invite/P2P), tabla de procesos con log/estado y mejor manejo de errores del agente, autoajuste de Agent URL y persistencia, mensajes claros ante 401/403/conexión fallida, metadatos de run/config en panel de rondas; **deploy** de archivos web al VPS.
 - 2026-11-12 (visual, network): mejoras en `web/network.*` (topología más clara, metadatos run/config, manejo de errores 401/403/conexión, empty states, estilo pulido); **deploy** de archivos web al VPS.
+- 2026-11-12 (P2.1, WAN): base de descarga de estado reanudable/verificada por HTTP — cache de blob y metadatos `state_blob_hash/state_blob_bytes` en `state_meta`, soporte `Range`/`206`/`416` en `/v1/state` (coordinador), cliente worker con descarga por chunks, reintentos/resume y verificación de hash; tests 39 OK.
 - 2026-11-12 (infra reciente): `/v1/public/status`, deploy `didiloco.bsv.direct` (`/var/www/didiloco`, `proxy-net`), auth HTTP Basic/token en dashboard/agente, fixes de deploy y runtime Docker (numpy).
