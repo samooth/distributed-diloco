@@ -42,11 +42,11 @@ networks:
 
 ## Archivos importantes
 
-- `deploy/nginx/ddiloco.bsv.direct.conf` → copiar a tu `user_conf.d/` del nginx-certbot
-- `deploy/nginx/dash.ddiloco.bsv.direct.conf` → copiar a tu `user_conf.d/` del nginx-certbot
-- `web/public/` → copiar a `/var/www/ddiloco.bsv.direct/` en el host del VPS (nginx ya monta `/var/www`)
-- `deploy/docker-compose.diloco.yml` → compose de servicios DiLoCo (usa `proxy-net` externo)
-- `deploy/.env.example` → copiar a `deploy/.env` en el VPS y ajustar `AGENT_TOKEN`
+- `deploy/nginx/didiloco.bsv.direct.conf` → vhost para `didiloco.bsv.direct` (web pública en `/var/www/didiloco` + `/api/status` a `diloco-coordinator:8095`)
+- `deploy/nginx/dash.ddiloco.bsv.direct.conf` → vhost opcional para dashboard privado en subdominio (proxy a `diloco-agent:8765`)
+- `web/public/` → página pública; publicar en `/var/www/didiloco` (nginx ya monta `/var/www`)
+- `deploy/docker-compose.diloco.yml` → compose de servicios DiLoCo (red externa `proxy-net`)
+- `deploy/.env.example` → copiar a `deploy/.env` en el VPS y ajustar `AGENT_TOKEN` (auth del dashboard/agente)
 - `deploy/deploy_vps.sh` → script de publicación/actualización remota
 - `configs/docker-coordinator.json` → config del coordinador para Docker (`host: 0.0.0.0`, puerto 8095)
 
@@ -105,7 +105,8 @@ sudo cp /opt/didiloco/deploy/nginx/didiloco.bsv.direct.conf /ruta/en/vps/al/user
 ```bash
 cd /opt/didiloco
 cp -n deploy/.env.example deploy/.env
-# edita deploy/.env -> AGENT_TOKEN fuerte
+# edita deploy/.env -> AGENT_TOKEN fuerte (dashboard/agente)
+#   openssl rand -hex 32
 
 docker network create proxy-net || true
 docker compose -f deploy/docker-compose.diloco.yml --env-file deploy/.env up -d --build
@@ -136,9 +137,10 @@ docker compose -f deploy/docker-compose.diloco.yml logs -f --tail=100
 ## Seguridad (importante)
 
 - **No expongas** `8095/8765` públicamente. Solo `80/443` vía nginx.
-- **Nunca** publiques `/v1/register`, `/v1/update`, `/v1/state`, `/launch/*`, `/stop`. El vhost solo proxyea `/api/status` → `/v1/public/status`.
-- Cambia `configs/docker-coordinator.json` (`coordinator.token`) y `deploy/.env` (`AGENT_TOKEN`).
-- Si habilitas `/dashboard/` en el vhost (privado, proxyeado a `diloco-agent`), protégelo con `auth_basic` y/o allowlist/VPN antes de exponerlo.
+- **Nunca** publiques `/v1/register`, `/v1/update`, `/v1/state`, `/launch/*`, `/stop`. El vhost público solo debe proxyear `/api/status` → `/v1/public/status`.
+- **Dashboard/agente (`diloco-agent:8765`, puede lanzar procesos)**: cuando `AGENT_TOKEN` está configurado, el agente exige autenticación para la UI y `/processes`, `/launch/*`, `/stop` (`/health` queda abierto para checks). Acceso navegador: **HTTP Basic Auth** (usuario cualquiera, contraseña = `AGENT_TOKEN`). API/programático: header `X-DiLoCo-Token` o `?token=`.
+- Configura un `AGENT_TOKEN` fuerte en `/opt/didiloco/deploy/.env` y recrea/actualiza el contenedor (`docker compose -f deploy/docker-compose.diloco.yml --env-file deploy/.env up -d`). Cambia también `coordinator.token` en `configs/docker-coordinator.json` si aplica.
+- Si expones el dashboard por nginx (`dash.ddiloco.bsv.direct` o `/dashboard/`), añade capas extra: `auth_basic` de nginx y/o allowlist IP/VPN/Tailscale/Cloudflare Access. No lo dejes abierto a internet.
 - El vhost usa `resolver 127.0.0.11` + `proxy_pass` con variable para que nginx pueda arrancar/recargar aunque los contenedores DiLoCo no estén activos (la web pública seguirá sirviendo; `/api/status` devolverá 503 JSON).
 
 ## Problemas comunes

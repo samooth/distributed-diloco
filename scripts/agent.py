@@ -8,6 +8,7 @@ for trusted LAN/Tailscale environments only.
 from __future__ import annotations
 
 import argparse
+import base64
 import hmac
 import json
 import logging
@@ -21,7 +22,7 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,28 +48,55 @@ def _launch(cmd: List[str], log_path: Path) -> str:
 class Handler(BaseHTTPRequestHandler):
     AGENT_TOKEN = ""
 
-    def _send(self, status: int, payload: Any) -> None:
+    def _send(self, status: int, payload: Any, extra_headers: Optional[Dict[str, str]] = None) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "X-DiLoCo-Token, Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, X-DiLoCo-Token, Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        if extra_headers:
+            for k, v in extra_headers.items():
+                self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def _matches_token(self, got: str) -> bool:
+        token = str(self.AGENT_TOKEN or "")
+        if not token or not got:
+            return False
+        try:
+            return hmac.compare_digest(str(got), token)
+        except Exception:
+            return False
+
     def _authorized(self) -> bool:
         if not self.AGENT_TOKEN:
             return True
+        # X-DiLoCo-Token header or ?token= query param (API/legacy)
         got = self.headers.get("X-DiLoCo-Token", "")
         if not got:
             qs = parse_qs(urlparse(self.path).query)
             got = (qs.get("token") or [""])[-1]
-        try:
-            return bool(got) and hmac.compare_digest(str(got), str(self.AGENT_TOKEN))
-        except Exception:
-            return False
+        if got and self._matches_token(str(got)):
+            return True
+        # HTTP Basic Auth (browser/dashboard login): password = agent token
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Basic "):
+            try:
+                raw = base64.b64decode(auth.split(" ", 1)[1].strip()).decode("utf-8")
+                _user, _sep, pwd = raw.partition(":")
+                if self._matches_token(pwd):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _auth_required_headers(self) -> Dict[str, str]:
+        if self.AGENT_TOKEN:
+            return {"WWW-Authenticate": 'Basic realm="DiLoCo Dashboard", charset="UTF-8"'}
+        return {}
 
     def do_OPTIONS(self) -> None:
         self._send(204, {})
@@ -93,10 +121,16 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self) -> None:
-        if self.path == "/health":
+        route = unquote(urlparse(self.path).path)
+        # Allow unauthenticated health checks
+        if route == "/health":
             self._send(200, {"ok": True, "processes": len(PROCESSES)})
             return
-        if self.path == "/processes":
+        # Protect dashboard UI and agent APIs when token is configured
+        if self.AGENT_TOKEN and not self._authorized():
+            self._send(401, {"error": "unauthorized"}, extra_headers=self._auth_required_headers())
+            return
+        if route == "/processes":
             out = []
             with LOCK:
                 for pid, info in PROCESSES.items():
@@ -118,7 +152,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if not self._authorized():
-            self._send(401, {"error": "unauthorized"})
+            self._send(401, {"error": "unauthorized"}, extra_headers=self._auth_required_headers())
             return
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length else b"{}"
@@ -212,14 +246,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="DiLoCo process agent for web UI")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--token", default="", help="require X-DiLoCo-Token for control endpoints (POST)")
+    parser.add_argument("--token", default="", help="dashboard/control auth token (HTTP Basic password, X-DiLoCo-Token header, or ?token=). Protects UI and /processes,/launch/*,/stop; /health remains open")
     parser.add_argument("--open", action="store_true", help="open dashboard in browser")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     Handler.AGENT_TOKEN = str(args.token or "")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host if args.host != '0.0.0.0' else '127.0.0.1'}:{args.port}/dashboard.html"
-    logging.info("agent listening on %s (serves web/ + /health, /processes, /launch/*, /stop)", url)
+    if Handler.AGENT_TOKEN:
+        logging.info("agent listening on %s (dashboard protected by token; /health open)", url)
+    else:
+        logging.info("agent listening on %s (no token set: dashboard/control UNPROTECTED)", url)
     if args.open:
         try:
             webbrowser.open(url)

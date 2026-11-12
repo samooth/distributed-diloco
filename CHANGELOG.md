@@ -16,7 +16,7 @@ Notas detalladas de cambios y decisiones. El `README.md` es la presentación.
 - **Bootstrap local de estado inicial** (worker): `--init-state` carga el bundle local si `state_hash`/`base_hash`/`config_hash` coinciden con el coordinador; evita descargas grandes por túnel en round 0.
 - **Autodetección/export de init state**: `run_worker.py`/`run_coordinator.py` descubren `runs/init-<config-stem>` para HF; `--init-state auto` en coordinador exporta el adaptador si falta.
 - **Wrappers raíz**: `./coordinator`, `./worker`, `./agent`, `./pilot` (usan `.venv/bin/python` si existe).
-- **Agent web**: `scripts/agent.py` sirve `web/` en el mismo origen, añade `--open`, pasa parámetros de identidad/invite y soporta `--token` para proteger endpoints de control (POST).
+- **Agent web + auth dashboard**: `scripts/agent.py` sirve `web/` en el mismo origen, añade `--open`, pasa parámetros de identidad/invite y, con `--token`/`AGENT_TOKEN`, protege el dashboard y APIs de control (`/processes`, `/launch/*`, `/stop`) mediante **HTTP Basic Auth** (contraseña = token, prompt en navegador) además de `X-DiLoCo-Token`/`?token=`; `/health` permanece sin auth para checks. Deploy/docs actualizados (`deploy/.env.example`, vhosts nginx, README).
 - **Reintentos de red** en worker para requests seguras (`GET`, heartbeat/register/leave) ante `IncompleteRead`/desconexiones.
 
 ### Cambiado
@@ -33,7 +33,7 @@ Notas detalladas de cambios y decisiones. El `README.md` es la presentación.
 ### Notas
 - El túnel bitbeam requiere `cd network/holepunch-sidecar && npm install` en cada máquina. Tras cambios en `index.js`, reiniciar procesos que lanzan el sidecar.
 - `--init-state auto` en coordinador puede cargar el modelo base; para 32B/70B exportar en una máquina adecuada y distribuir el bundle.
-- `scripts/agent.py` es para entornos confiables (sin auth fuerte por defecto).
+- `scripts/agent.py`: con token protege dashboard/control, pero sigue siendo un componente privilegiado (puede lanzar procesos); exponerlo solo tras auth fuerte y/o red privada/VPN.
 
 ## [Previo] — base P0–P2
 
