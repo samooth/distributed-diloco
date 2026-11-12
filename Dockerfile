@@ -19,9 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #     && apt-get install -y --no-install-recommends nodejs \
 #     && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies (CPU torch + safetensors). For GPU/HF, install extras in a derived image.
+# Python dependencies (CPU torch + safetensors + numpy for tensor hashing/utils).
+# For GPU/HF, install extras in a derived image.
 RUN pip install --upgrade pip \
-    && pip install "torch>=2.8,<3" "safetensors>=0.5"
+    && pip install "torch>=2.8,<3" "safetensors>=0.5" "numpy>=1.26"
 
 # Copy project
 COPY . /app
