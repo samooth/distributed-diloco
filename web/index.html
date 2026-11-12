@@ -30,35 +30,35 @@
         <a href="#resultados">Resultados</a>
         <a href="#roadmap">Roadmap</a>
         <a href="#inicio">Inicio rápido</a>
-        <a href="dashboard.html">Dashboard</a>
+        <a href="dashboard.html">Console</a>
         <a href="network.html">Network</a>
       </nav>
-      <a class="nav-cta" href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+      <a class="nav-cta" href="dashboard.html">Abrir Console</a>
     </div>
   </header>
 
   <main>
     <!-- HERO -->
     <section class="hero">
-      <div class="hero-badge">v0.2 · 39 tests OK · gRPC/mTLS · churn recuperado</div>
+      <div class="hero-badge">v0.3 · 39 tests OK · BSV + bitbeam · auth dashboard · estado público live</div>
       <h1 class="hero-title">
         Entrena LLMs de <span class="grad">32B / 70B</span><br />
         sobre internet, sin datacenter.
       </h1>
       <p class="hero-sub">
         DiLoCo WAN adapta modelos grandes con <strong>QLoRA</strong> sincronizando
-        solo el adaptador cada <code>H</code> pasos. int8, top-k, error feedback,
-        churn completo y emulación WAN incluidos. Hardware modesto, fibra doméstica.
+        solo el adaptador cada <code>H</code> pasos. Transporte <strong>bitbeam</strong> (DHT),
+        identidad/admisión <strong>BSV</strong> (MVP), compresión, tolerancia a churn y operación sobre WAN.
       </p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="#inicio">Empezar</a>
-        <a class="btn btn-ghost" href="#resultados">Ver resultados</a>
+        <a class="btn btn-ghost" href="/api/status" target="_blank" rel="noopener">Estado público</a>
       </div>
       <div class="hero-stats">
         <div class="stat"><span class="stat-num">39</span><span class="stat-label">tests OK</span></div>
         <div class="stat"><span class="stat-num">4×</span><span class="stat-label">compresión int8</span></div>
-        <div class="stat"><span class="stat-num">-1.47%</span><span class="stat-label">loss gap H=100</span></div>
-        <div class="stat"><span class="stat-num">2–4</span><span class="stat-label">islas domésticas</span></div>
+        <div class="stat"><span class="stat-num">BSV</span><span class="stat-label">identidad + admisión</span></div>
+        <div class="stat"><span class="stat-num">WAN</span><span class="stat-label">bitbeam + churn</span></div>
       </div>
     </section>
 
@@ -308,8 +308,8 @@
     </section>
 
     <footer class="footer">
-      <p>DiLoCo WAN · adaptación distribuida de LLMs sobre internet · Python + PyTorch + PEFT + bitsandbytes</p>
-      <p class="footer-small">Estado: P0/P1/P2 completos · P3 en curso · 39 tests OK · RTX 3080 8 GB validado</p>
+      <p>DiLoCo WAN · entrenamiento distribuido de LLMs sobre internet · Python + PyTorch + PEFT + bitbeam + BSV</p>
+      <p class="footer-small">P0–P2 base completos · identidad BSV MVP · túnel bitbeam v4 · dashboard protegido · estado público en <code>/api/status</code></p>
     </footer>
   </main>
 
