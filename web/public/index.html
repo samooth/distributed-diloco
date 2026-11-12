@@ -3,136 +3,390 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>didiloco.bsv.direct — DiLoCo WAN Network Status</title>
-  <meta name="description" content="Estado público de la red DiLoCo WAN" id="meta-desc" />
+  <title>didiloco.bsv.direct — DiLoCo WAN Network</title>
+  <meta name="description" content="Estado público de la red DiLoCo WAN: entrenamiento distribuido de LLMs con LoRA sobre BSV + bitbeam." id="meta-desc" />
+  <meta name="theme-color" content="#070b14" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #0b1020;
-      --bg2: #111832;
-      --card: rgba(18, 26, 48, 0.72);
-      --border: rgba(148, 163, 184, 0.18);
-      --text: #e6edf7;
-      --muted: #9fb0d0;
-      --accent: #6ee7ff;
+      --bg: #070b14;
+      --bg2: #0c1222;
+      --panel: rgba(13, 19, 35, 0.72);
+      --panel-strong: rgba(16, 24, 44, 0.88);
+      --border: rgba(148, 163, 184, 0.14);
+      --border-strong: rgba(148, 163, 184, 0.22);
+      --text: #e8eefc;
+      --muted: #93a4c7;
+      --muted2: #6f819f;
+      --accent: #4de3ff;
       --accent2: #8b5cf6;
+      --accent3: #22d3ee;
       --ok: #34d399;
       --warn: #fbbf24;
       --bad: #fb7185;
-      --shadow: 0 20px 60px rgba(0,0,0,.35);
+      --glow-a: rgba(77, 227, 255, 0.18);
+      --glow-b: rgba(139, 92, 246, 0.16);
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      --radius: 18px;
+      --radius-sm: 12px;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
-      margin: 0; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
       color: var(--text);
-      background:
-        radial-gradient(900px 500px at 10% -10%, rgba(110,231,255,.18), transparent 60%),
-        radial-gradient(800px 500px at 100% 0%, rgba(139,92,246,.18), transparent 55%),
-        linear-gradient(180deg, #0b1020 0%, #0a0f1d 100%);
-      min-height: 100vh;
+      background: var(--bg);
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
-    header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom: 28px; }
-    .brand { display:flex; align-items:center; gap:12px; }
-    .mark { width:40px; height:40px; border-radius:12px; display:grid; place-items:center; font-weight:800; color:#041018;
-      background: linear-gradient(135deg, var(--accent), var(--accent2)); box-shadow: 0 10px 30px rgba(110,231,255,.25); }
-    .brand h1 { margin:0; font-size: 1.15rem; letter-spacing: .2px; }
-    .brand p { margin:2px 0 0; color: var(--muted); font-size: .9rem; }
-    .pill { font-size:.8rem; color: var(--muted); border:1px solid var(--border); padding:8px 12px; border-radius:999px; background: rgba(255,255,255,.03); }
-    .hero { display:grid; grid-template-columns: 1.2fr .8fr; gap:18px; margin-bottom: 18px; }
-    .card { background: var(--card); border:1px solid var(--border); border-radius: 18px; padding: 20px; box-shadow: var(--shadow); backdrop-filter: blur(8px); }
-    .hero h2 { margin:0 0 8px; font-size: 1.8rem; line-height:1.15; }
-    .hero .sub { color: var(--muted); margin:0 0 18px; }
-    .status-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-    .dot { width:10px; height:10px; border-radius:50%; background: var(--muted); box-shadow: 0 0 0 6px rgba(148,163,184,.12); }
-    .dot.ok { background: var(--ok); box-shadow: 0 0 0 6px rgba(52,211,153,.15); }
-    .dot.warn { background: var(--warn); box-shadow: 0 0 0 6px rgba(251,191,36,.15); }
-    .dot.bad { background: var(--bad); box-shadow: 0 0 0 6px rgba(251,113,133,.15); }
-    .status-text { font-weight:700; font-size:1.05rem; }
-    .muted { color: var(--muted); }
+    /* Animated background */
+    .bg {
+      position: fixed; inset: 0; z-index: -2; overflow: hidden;
+      background:
+        radial-gradient(900px 500px at 8% -5%, var(--glow-a), transparent 60%),
+        radial-gradient(800px 520px at 100% 0%, var(--glow-b), transparent 55%),
+        radial-gradient(700px 500px at 50% 120%, rgba(34,211,238,.08), transparent 60%),
+        linear-gradient(180deg, #070b14 0%, #090f1d 55%, #070b14 100%);
+    }
+    .bg::before {
+      content: ""; position: absolute; inset: -20%;
+      background-image:
+        linear-gradient(rgba(148,163,184,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148,163,184,0.05) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+      opacity: .35;
+      transform: perspective(800px) rotateX(55deg) translateY(10%);
+      transform-origin: center top;
+      animation: gridDrift 24s linear infinite;
+    }
+    @keyframes gridDrift { 0% { background-position: 0 0, 0 0; } 100% { background-position: 0 48px, 48px 0; } }
+    .orb {
+      position: absolute; border-radius: 999px; filter: blur(40px); opacity: .5;
+      animation: float 14s ease-in-out infinite;
+    }
+    .orb.a { width: 420px; height: 420px; left: -120px; top: -80px; background: rgba(77,227,255,.16); }
+    .orb.b { width: 360px; height: 360px; right: -80px; top: 10%; background: rgba(139,92,246,.18); animation-delay: -4s; }
+    .orb.c { width: 320px; height: 320px; left: 35%; bottom: -120px; background: rgba(52,211,153,.10); animation-delay: -8s; }
+    @keyframes float { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(20px,-18px,0) scale(1.04); } }
+
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 26px 20px 64px; position: relative; }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+      margin-bottom: 26px;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .mark {
+      width: 44px; height: 44px; border-radius: 14px; position: relative;
+      display: grid; place-items: center; font-weight: 800; color: #041018;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 12px 34px rgba(77,227,255,.22), inset 0 1px 0 rgba(255,255,255,.25);
+    }
+    .mark::after {
+      content: ""; position: absolute; inset: -4px; border-radius: 16px;
+      background: linear-gradient(135deg, rgba(77,227,255,.35), rgba(139,92,246,.25));
+      filter: blur(10px); opacity: .5; z-index: -1;
+    }
+    .brand h1 { margin: 0; font-size: 1.05rem; letter-spacing: .2px; font-weight: 700; }
+    .brand p { margin: 2px 0 0; color: var(--muted); font-size: .86rem; }
+    .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .pill {
+      font-size: .78rem; color: var(--muted); border: 1px solid var(--border);
+      padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,.03);
+      backdrop-filter: blur(8px);
+    }
+    .live {
+      display: inline-flex; align-items: center; gap: 8px; color: var(--text);
+      border-color: rgba(52,211,153,.25); background: rgba(52,211,153,.06);
+    }
+    .pulse {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+      box-shadow: 0 0 0 0 rgba(52,211,153,.7); animation: pulse 1.8s infinite;
+    }
+    .pulse.warn { background: var(--warn); box-shadow: 0 0 0 0 rgba(251,191,36,.7); }
+    .pulse.bad { background: var(--bad); box-shadow: 0 0 0 0 rgba(251,113,133,.7); }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(52,211,153,.55); }
+      70% { box-shadow: 0 0 0 10px rgba(52,211,153,0); }
+      100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+    }
+
+    .hero {
+      display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; margin-bottom: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 30%);
+    }
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: .78rem; color: var(--accent); font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .eyebrow .tag {
+      font-size: .72rem; color: var(--muted); border: 1px solid var(--border);
+      padding: 3px 8px; border-radius: 999px; letter-spacing: 0; text-transform: none; font-weight: 500;
+      background: rgba(255,255,255,.02);
+    }
+    .hero h2 {
+      margin: 0 0 10px; font-size: clamp(1.7rem, 2.6vw, 2.3rem); line-height: 1.12; letter-spacing: -0.02em;
+    }
+    .grad {
+      background: linear-gradient(90deg, var(--accent), #c4b5fd 55%, var(--accent2));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .sub { color: var(--muted); margin: 0 0 18px; font-size: 1rem; line-height: 1.6; max-width: 62ch; }
+    .status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .status-chip {
+      display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px;
+      border: 1px solid var(--border-strong); background: rgba(255,255,255,.03); font-weight: 600; font-size: .9rem;
+    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 14px rgba(52,211,153,.45); }
+    .dot.warn { background: var(--warn); box-shadow: 0 0 14px rgba(251,191,36,.45); }
+    .dot.bad { background: var(--bad); box-shadow: 0 0 14px rgba(251,113,133,.45); }
+    .run-id {
+      font-family: "JetBrains Mono", monospace; font-size: .78rem; color: var(--muted);
+      border: 1px solid var(--border); padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.02);
+    }
+    .progress-wrap { margin-top: 8px; }
+    .progress-head { display:flex; justify-content:space-between; gap:12px; color: var(--muted); font-size:.88rem; margin-bottom:8px; }
+    .progress {
+      height: 12px; border-radius: 999px; background: rgba(148,163,184,.12);
+      overflow: hidden; border: 1px solid rgba(148,163,184,.14); position: relative;
+    }
+    .bar {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent), #7dd3fc 35%, var(--accent2));
+      box-shadow: 0 0 24px rgba(77,227,255,.35);
+      transition: width .7s cubic-bezier(.2,.8,.2,1);
+      position: relative;
+    }
+    .bar::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+      transform: translateX(-100%); animation: sheen 2.8s infinite;
+    }
+    @keyframes sheen { 100% { transform: translateX(100%); } }
+    .meta-row { display:flex; gap:10px; flex-wrap:wrap; margin-top: 14px; }
+    .meta {
+      font-size: .8rem; color: var(--muted); padding: 7px 10px; border-radius: 10px;
+      border: 1px solid var(--border); background: rgba(255,255,255,.02);
+    }
+    .meta b { color: var(--text); font-weight: 600; }
+
+    /* Side network viz */
+    .viz-card { display:flex; flex-direction:column; gap:14px; min-height: 100%; }
+    .viz-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .viz-head h3 { margin:0; font-size:1rem; }
+    .viz {
+      flex: 1; min-height: 220px; border-radius: 14px; border: 1px solid var(--border);
+      background: radial-gradient(400px 220px at 50% 30%, rgba(77,227,255,.08), transparent 60%), rgba(255,255,255,.02);
+      position: relative; overflow: hidden;
+    }
+    .viz svg { width: 100%; height: 100%; display:block; }
+    .node { fill: #0b1326; stroke: rgba(148,163,184,.5); stroke-width: 1.2; }
+    .node.core { fill: url(#coreGrad); stroke: rgba(77,227,255,.9); }
+    .node.worker { fill: rgba(139,92,246,.18); stroke: rgba(139,92,246,.7); }
+    .node.active { stroke: rgba(52,211,153,.9); filter: drop-shadow(0 0 6px rgba(52,211,153,.35)); }
+    .link { stroke: rgba(148,163,184,.22); stroke-width: 1; }
+    .link.active { stroke: rgba(77,227,255,.55); stroke-dasharray: 4 6; animation: dash 6s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -100; } }
+    .viz-stats { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .mini {
+      padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.02);
+    }
+    .mini .k { color: var(--muted); font-size: .78rem; margin-bottom: 4px; }
+    .mini .v { font-family: "JetBrains Mono", monospace; font-weight: 600; font-size: 1.05rem; }
+
     .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; margin-bottom: 18px; }
-    .stat { padding:16px; border-radius:14px; border:1px solid var(--border); background: rgba(255,255,255,.02); }
-    .stat .k { color: var(--muted); font-size:.82rem; margin-bottom:6px; }
-    .stat .v { font-size:1.5rem; font-weight:700; font-family: "JetBrains Mono", monospace; }
-    .progress-wrap { margin-top: 14px; }
-    .progress { height: 10px; border-radius:999px; background: rgba(148,163,184,.15); overflow:hidden; border:1px solid rgba(148,163,184,.12); }
-    .bar { height:100%; width:0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .6s ease; }
-    .row { display:flex; justify-content:space-between; gap:12px; color: var(--muted); font-size:.9rem; margin-top:8px; }
-    .two { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
-    table { width:100%; border-collapse: collapse; }
-    td { padding: 10px 0; border-bottom: 1px solid rgba(148,163,184,.12); vertical-align: top; }
-    td:first-child { color: var(--muted); width: 45%; }
-    code, .mono { font-family: "JetBrains Mono", monospace; }
-    .tag { display:inline-block; padding:4px 10px; border-radius:999px; font-size:.78rem; border:1px solid var(--border); background: rgba(255,255,255,.03); }
-    footer { margin-top: 22px; color: var(--muted); font-size:.85rem; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .stat {
+      padding: 16px 16px 14px; border-radius: 14px; border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+    }
+    .stat .k { color: var(--muted); font-size:.8rem; margin-bottom: 6px; }
+    .stat .v { font-size: 1.55rem; font-weight: 700; font-family: "JetBrains Mono", monospace; letter-spacing: -0.02em; }
+    .stat .s { color: var(--muted2); font-size: .75rem; margin-top: 4px; min-height: 1em; }
+
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap:18px; margin-bottom: 18px; }
+    h3 { margin: 0 0 12px; font-size: 1rem; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 10px 0; border-bottom: 1px solid rgba(148,163,184,.1); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    td:first-child { color: var(--muted); width: 46%; }
+    .mono { font-family: "JetBrains Mono", monospace; }
+    .muted { color: var(--muted); }
+    .tag {
+      display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+      font-size:.78rem; border:1px solid var(--border); background: rgba(255,255,255,.03); color: var(--text);
+    }
+    .tag.ok { color: var(--ok); border-color: rgba(52,211,153,.3); background: rgba(52,211,153,.08); }
+    .tag.warn { color: var(--warn); border-color: rgba(251,191,36,.3); background: rgba(251,191,36,.08); }
+    .tag.bad { color: var(--bad); border-color: rgba(251,113,133,.3); background: rgba(251,113,133,.08); }
+    .tag.info { color: var(--accent); border-color: rgba(77,227,255,.3); background: rgba(77,227,255,.08); }
+
+    .about p { margin: 0 0 10px; line-height: 1.65; }
+    .stack { display:flex; flex-wrap:wrap; gap:8px; margin-top: 12px; }
+    .stack span {
+      font-size: .78rem; color: var(--muted); padding: 6px 10px; border-radius: 999px;
+      border: 1px solid var(--border); background: rgba(255,255,255,.02);
+    }
+
+    footer {
+      margin-top: 22px; color: var(--muted); font-size: .84rem;
+      display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center;
+    }
+    .error { color: #fcd34d; }
     a { color: var(--accent); text-decoration: none; }
-    .error { color: var(--warn); }
-    @media (max-width: 900px) { .hero, .two { grid-template-columns: 1fr; } .grid { grid-template-columns: repeat(2,1fr); } }
-    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } header { flex-direction: column; align-items: flex-start; } }
+    a:hover { text-decoration: underline; }
+
+    @media (max-width: 980px) {
+      .hero, .two { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 560px) {
+      .grid { grid-template-columns: 1fr; }
+      header { align-items: flex-start; }
+      .viz-stats { grid-template-columns: 1fr 1fr; }
+      .wrap { padding: 18px 14px 48px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+    }
   </style>
 </head>
 <body>
+  <div class="bg" aria-hidden="true">
+    <span class="orb a"></span>
+    <span class="orb b"></span>
+    <span class="orb c"></span>
+  </div>
+
   <div class="wrap">
     <header>
       <div class="brand">
         <div class="mark">◆</div>
         <div>
           <h1 id="siteHost">didiloco.bsv.direct</h1>
-          <p>DiLoCo WAN — estado público de la red</p>
+          <p>DiLoCo WAN · estado público de la red</p>
         </div>
       </div>
-      <div class="pill" id="updated">Actualizando…</div>
+      <div class="header-right">
+        <div class="pill live"><span class="pulse" id="livePulse"></span><span id="liveText">en vivo</span></div>
+        <div class="pill" id="updated">Actualizando…</div>
+      </div>
     </header>
 
     <section class="hero">
       <div class="card">
-        <h2>Entrenamiento distribuido sobre internet</h2>
-        <p class="sub">Coordinación DiLoCo con adaptadores LoRA, sincronización periódica y transporte bitbeam/BSV. Esta página muestra solo métricas agregadas y sanitizadas.</p>
+        <div class="eyebrow">Entrenamiento distribuido <span class="tag">BSV + bitbeam</span></div>
+        <h2>Red DiLoCo sobre internet, <span class="grad">sin datacenter</span></h2>
+        <p class="sub">Sincronización periódica de adaptadores LoRA (DiLoCo/Nesterov outer) entre nodos WAN. Esta vista expone solo métricas agregadas y sanitizadas del coordinador.</p>
+
         <div class="status-row">
-          <span class="dot" id="dot"></span>
-          <span class="status-text" id="statusText">Conectando…</span>
-          <span class="tag mono" id="runId">run: —</span>
+          <span class="status-chip"><span class="dot" id="dot"></span><span id="statusText">Conectando…</span></span>
+          <span class="run-id" id="runId">run: —</span>
+          <span id="stateTag" class="tag">—</span>
         </div>
+
         <div class="progress-wrap">
+          <div class="progress-head">
+            <span id="progressLabel">Ronda — / —</span>
+            <span class="mono" id="progressPct">0%</span>
+          </div>
           <div class="progress"><div class="bar" id="bar"></div></div>
-          <div class="row"><span id="progressLabel">Ronda — / —</span><span id="progressPct">0%</span></div>
+        </div>
+
+        <div class="meta-row">
+          <div class="meta">Workers activos: <b class="mono" id="workersMeta">—</b></div>
+          <div class="meta">Quorum: <b class="mono" id="quorumMeta">—</b></div>
+          <div class="meta">Global step: <b class="mono" id="gstepMeta">—</b></div>
         </div>
       </div>
-      <div class="card">
-        <div class="muted" style="margin-bottom:10px">Resumen rápido</div>
-        <table>
-          <tr><td>Workers activos</td><td class="mono" id="workers">—</td></tr>
-          <tr><td>Quorum / Mínimo</td><td class="mono" id="quorum">—</td></tr>
-          <tr><td>Updates pendientes</td><td class="mono" id="pending">—</td></tr>
-          <tr><td>Global step</td><td class="mono" id="gstep">—</td></tr>
-          <tr><td>Estado</td><td id="stateTag">—</td></tr>
-        </table>
+
+      <div class="card viz-card">
+        <div class="viz-head">
+          <h3>Topología (agregada)</h3>
+          <span class="tag info mono" id="netTag">coordinator</span>
+        </div>
+        <div class="viz" aria-hidden="true">
+          <svg viewBox="0 0 400 240" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <linearGradient id="coreGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#4de3ff"/>
+                <stop offset="100%" stop-color="#8b5cf6"/>
+              </linearGradient>
+            </defs>
+            <g id="links">
+              <line class="link" x1="200" y1="120" x2="70" y2="60" />
+              <line class="link" x1="200" y1="120" x2="330" y2="60" />
+              <line class="link" x1="200" y1="120" x2="60" y2="170" />
+              <line class="link" x1="200" y1="120" x2="340" y2="170" />
+              <line class="link" x1="200" y1="120" x2="200" y2="30" />
+              <line class="link" x1="200" y1="120" x2="200" y2="210" />
+            </g>
+            <g id="workers-nodes">
+              <circle class="node worker" id="wn0" cx="70" cy="60" r="10" />
+              <circle class="node worker" id="wn1" cx="330" cy="60" r="10" />
+              <circle class="node worker" id="wn2" cx="60" cy="170" r="10" />
+              <circle class="node worker" id="wn3" cx="340" cy="170" r="10" />
+              <circle class="node worker" id="wn4" cx="200" cy="30" r="10" />
+              <circle class="node worker" id="wn5" cx="200" cy="210" r="10" />
+            </g>
+            <circle class="node core" cx="200" cy="120" r="18" />
+            <circle cx="200" cy="120" r="28" fill="none" stroke="rgba(77,227,255,.18)" stroke-width="1">
+              <animate attributeName="r" values="28;34;28" dur="3s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.5;0.15;0.5" dur="3s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+        </div>
+        <div class="viz-stats">
+          <div class="mini"><div class="k">Updates pendientes</div><div class="v" id="pending">—</div></div>
+          <div class="mini"><div class="k">Nodos (últ. ronda)</div><div class="v" id="lastNodes">—</div></div>
+        </div>
       </div>
     </section>
 
     <section class="grid">
-      <div class="stat card"><div class="k">Ronda actual</div><div class="v" id="round">—</div></div>
-      <div class="stat card"><div class="k">Rondas totales</div><div class="v" id="maxRounds">—</div></div>
-      <div class="stat card"><div class="k">Nodos en última ronda</div><div class="v" id="lastNodes">—</div></div>
-      <div class="stat card"><div class="k">Train loss (última)</div><div class="v" id="lastLoss">—</div></div>
+      <div class="stat card"><div class="k">Ronda actual</div><div class="v" id="round">—</div><div class="s" id="roundSub">—</div></div>
+      <div class="stat card"><div class="k">Rondas totales</div><div class="v" id="maxRounds">—</div><div class="s">objetivo del run</div></div>
+      <div class="stat card"><div class="k">Train loss (última)</div><div class="v" id="lastLoss">—</div><div class="s">última ronda completada</div></div>
+      <div class="stat card"><div class="k">Delta norm (última)</div><div class="v" id="lrDelta">—</div><div class="s">agregado de ronda</div></div>
     </section>
 
     <section class="two">
       <div class="card">
-        <h3 style="margin:0 0 10px">Última ronda completada</h3>
+        <h3>Última ronda completada</h3>
         <table>
           <tr><td>Ronda</td><td class="mono" id="lrRound">—</td></tr>
-          <tr><td>Delta norm</td><td class="mono" id="lrDelta">—</td></tr>
+          <tr><td>Workers (ronda)</td><td class="mono" id="lrWorkers">—</td></tr>
+          <tr><td>Train loss</td><td class="mono" id="lrLoss2">—</td></tr>
           <tr><td>Sync (s)</td><td class="mono" id="lrSync">—</td></tr>
           <tr><td>Global step</td><td class="mono" id="lrStep">—</td></tr>
         </table>
       </div>
-      <div class="card">
-        <h3 style="margin:0 0 10px">Sobre esta red</h3>
-        <p class="muted" style="margin-top:0">DiLoCo sincroniza solo adaptadores LoRA cada <em>H</em> pasos con un optimizador externo (Nesterov), permitiendo entrenar modelos grandes sobre conexiones domésticas/WAN.</p>
-        <p class="muted" style="margin-bottom:0">Identidad y transporte basados en BSV + bitbeam (MVP). Los datos sensibles (nodos, claves, logs, endpoints de control) no se exponen en esta página.</p>
+      <div class="card about">
+        <h3>Sobre la red</h3>
+        <p class="muted"><b>DiLoCo</b> entrena localmente durante <em>H</em> pasos y sincroniza solo deltas de adaptadores LoRA con un optimizador externo (Nesterov), reduciendo drásticamente el tráfico frente a sincronización por paso.</p>
+        <p class="muted">Diseñado para operar sobre enlaces WAN/domésticos con tolerancia a churn, compresión y transporte <b>bitbeam</b> (DHT) con identidad/admisión basada en <b>BSV</b> (MVP).</p>
+        <div class="stack">
+          <span>LoRA / QLoRA</span><span>DiLoCo + Nesterov</span><span>bitbeam v4</span><span>BSV identity (MVP)</span><span>WAN / churn tolerant</span>
+        </div>
+        <p class="muted" style="margin-top:12px;font-size:.85rem">Privacidad: esta página no expone IDs de nodos, claves, endpoints de control, logs ni hashes sensibles.</p>
       </div>
     </section>
 
@@ -147,22 +401,51 @@
     const API = params.get('api') || '/api/status';
     const REFRESH_MS = 15000;
     const host = location.host || 'didiloco.bsv.direct';
-    document.title = host + ' — DiLoCo WAN Network Status';
+    document.title = host + ' — DiLoCo WAN Network';
     document.getElementById('siteHost').textContent = host;
     document.getElementById('footBrand').textContent = host + ' · Estado público (sanitizado)';
+    const metaDesc = document.getElementById('meta-desc');
+    if (metaDesc) metaDesc.setAttribute('content', 'Estado público de la red DiLoCo WAN en ' + host);
 
     const $ = (id) => document.getElementById(id);
-    const fmt = (v, d=4) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+    const fmt = (v, d = 4) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+    const fmtSmart = (v) => {
+      if (v == null || !isFinite(v)) return '—';
+      const n = Number(v);
+      const abs = Math.abs(n);
+      if (abs === 0) return '0';
+      if (abs >= 1000) return n.toFixed(0);
+      if (abs >= 10) return n.toFixed(3);
+      if (abs >= 1) return n.toFixed(4);
+      return n.toPrecision(3);
+    };
     const fmtInt = (v) => (v == null || !isFinite(v)) ? '—' : String(Math.trunc(Number(v)));
 
     function setStatus(kind, text) {
       const dot = $('dot');
       dot.className = 'dot' + (kind ? ' ' + kind : '');
       $('statusText').textContent = text;
+      const pulse = $('livePulse');
+      pulse.className = 'pulse' + (kind === 'warn' ? ' warn' : kind === 'bad' ? ' bad' : '');
+      $('liveText').textContent = kind === 'bad' ? 'atención' : kind === 'warn' ? 'en espera' : 'en vivo';
+    }
+
+    function setViz(activeWorkers, totalSlots) {
+      const nodes = [0,1,2,3,4,5].map(i => $('wn' + i));
+      const links = Array.from(document.querySelectorAll('#links .link'));
+      const n = Math.max(0, Math.min(Number(activeWorkers || 0), nodes.length));
+      nodes.forEach((el, i) => {
+        if (!el) return;
+        if (i < n) el.classList.add('active'); else el.classList.remove('active');
+      });
+      links.forEach((el, i) => {
+        if (i < n) el.classList.add('active'); else el.classList.remove('active');
+      });
+      $('netTag').textContent = n > 0 ? (n + ' worker' + (n === 1 ? '' : 's')) : 'sin workers';
     }
 
     async function fetchStatus() {
-      const candidates = [API, '/v1/public/status', '/public/status'];
+      const candidates = [API, '/api/status', '/v1/public/status', '/public/status'];
       let lastErr = null;
       for (const url of candidates) {
         try {
@@ -178,34 +461,48 @@
       const round = Number(data.round || 0);
       const max = Number(data.max_rounds || 0);
       const pct = max > 0 ? Math.min(100, Math.max(0, (round / max) * 100)) : 0;
+      const workers = Number(data.workers_active || 0);
 
       $('runId').textContent = 'run: ' + (data.run_id || '—');
       $('round').textContent = fmtInt(round);
-      $('maxRounds').textContent = fmtInt(max);
-      $('gstep').textContent = fmtInt(data.global_step);
-      $('workers').textContent = fmtInt(data.workers_active);
-      $('quorum').textContent = fmtInt(data.quorum) + ' / ' + fmtInt(data.min_workers);
+      $('maxRounds').textContent = max > 0 ? fmtInt(max) : '∞';
+      $('roundSub').textContent = data.finished ? 'run finalizado' : (workers > 0 ? 'progreso activo' : 'esperando workers');
+      $('workersMeta').textContent = fmtInt(workers);
+      $('quorumMeta').textContent = fmtInt(data.quorum) + ' / ' + fmtInt(data.min_workers);
+      $('gstepMeta').textContent = fmtInt(data.global_step);
       $('pending').textContent = fmtInt(data.pending_updates);
-      $('bar').style.width = pct.toFixed(1) + '%';
-      $('progressLabel').textContent = `Ronda ${fmtInt(round)} / ${fmtInt(max)}`;
-      $('progressPct').textContent = pct.toFixed(0) + '%';
 
-      let kind = 'warn', label = 'En espera', tag = '<span class="tag">idle</span>';
-      if (data.has_failure) { kind = 'bad'; label = 'Error en la ejecución'; tag = '<span class="tag" style="color:#fb7185;border-color:rgba(251,113,133,.35)">failed</span>'; }
-      else if (data.finished) { kind = 'ok'; label = 'Finalizado'; tag = '<span class="tag" style="color:#34d399;border-color:rgba(52,211,153,.35)">finished</span>'; }
-      else if ((data.workers_active || 0) > 0 || round > 0) { kind = 'ok'; label = 'Entrenando'; tag = '<span class="tag" style="color:#6ee7ff;border-color:rgba(110,231,255,.35)">running</span>'; }
+      $('bar').style.width = pct.toFixed(1) + '%';
+      $('progressLabel').textContent = max > 0 ? `Ronda ${fmtInt(round)} / ${fmtInt(max)}` : `Ronda ${fmtInt(round)}`;
+      $('progressPct').textContent = max > 0 ? pct.toFixed(0) + '%' : '—';
+
+      let kind = 'warn', label = 'En espera', tag = '<span class="tag warn">idle</span>';
+      if (data.has_failure) {
+        kind = 'bad'; label = 'Error en la ejecución'; tag = '<span class="tag bad">failed</span>';
+      } else if (data.finished) {
+        kind = 'ok'; label = 'Finalizado'; tag = '<span class="tag ok">finished</span>';
+      } else if (workers > 0 || round > 0) {
+        kind = 'ok'; label = workers > 0 ? 'Entrenando' : 'Coordinador activo';
+        tag = '<span class="tag info">running</span>';
+      } else if (data.ok) {
+        kind = 'warn'; label = 'Coordinador en línea'; tag = '<span class="tag warn">waiting</span>';
+      }
       setStatus(kind, label);
-      $('stateTag').innerHTML = tag;
+      $('stateTag').outerHTML = `<span id="stateTag">${tag}</span>`;
 
       const lr = data.last_round || null;
-      $('lastNodes').textContent = lr ? fmtInt(lr.nodes_count) : '—';
-      $('lastLoss').textContent = lr ? fmt(lr.train_loss, 6) : '—';
+      $('lastNodes').textContent = lr ? fmtInt(lr.nodes_count) : '0';
+      $('lastLoss').textContent = lr ? fmtSmart(lr.train_loss) : '—';
       $('lrRound').textContent = lr ? (fmtInt(lr.round) + ' → ' + fmtInt(lr.new_round)) : '—';
-      $('lrDelta').textContent = lr ? fmt(lr.delta_norm, 6) : '—';
+      $('lrWorkers').textContent = lr ? fmtInt(lr.nodes_count) : '—';
+      $('lrDelta').textContent = lr ? fmtSmart(lr.delta_norm) : '—';
+      $('lrLoss2').textContent = lr ? fmtSmart(lr.train_loss) : '—';
       $('lrSync').textContent = lr ? fmt(lr.sync_seconds, 3) : '—';
       $('lrStep').textContent = lr ? fmtInt(lr.global_step) : '—';
 
-      const ts = data.updated_at ? new Date(data.updated_at * 1000) : new Date();
+      setViz(workers, 6);
+
+      const ts = data.updated_at ? new Date(Number(data.updated_at) * 1000) : new Date();
       $('updated').textContent = 'Actualizado: ' + ts.toLocaleTimeString();
       $('footMsg').textContent = 'Auto-refresh cada 15s · fuente: ' + (API || '/api/status');
       $('footMsg').className = 'muted';
@@ -213,10 +510,11 @@
 
     function renderError(err) {
       setStatus('warn', 'Sin datos (coordinador no disponible)');
+      setViz(0, 6);
       $('updated').textContent = 'Sin conexión';
       $('footMsg').textContent = 'No se pudo obtener estado público: ' + (err && err.message ? err.message : err);
       $('footMsg').className = 'muted error';
-      $('runId').textContent = 'run: —';
+      $('stateTag').outerHTML = '<span id="stateTag"><span class="tag warn">offline</span></span>';
     }
 
     async function tick() {
