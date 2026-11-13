@@ -282,8 +282,16 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError("train.batch_size and train.grad_accum must be >= 1")
     if t.outer_lr <= 0:
         raise ValueError("train.outer_lr must be > 0")
-    if t.delta_compression not in ("none", "int8", "topk", "int8_topk"):
-        raise ValueError("train.delta_compression must be none/int8/topk/int8_topk")
+    if t.delta_compression not in ("none", "int8", "topk", "int8_topk", "zstd"):
+        raise ValueError("train.delta_compression must be none/int8/topk/int8_topk/zstd")
+    if t.delta_compression == "zstd":
+        try:
+            from .compression import zstd_available
+
+            if not zstd_available():
+                raise ValueError("train.delta_compression='zstd' requires zstandard or Python compression.zstd support")
+        except ImportError:
+            raise ValueError("train.delta_compression='zstd' requires zstd compression support")
     if not 0.0 < t.top_k_ratio <= 1.0:
         raise ValueError("train.top_k_ratio must be in (0, 1]")
     if c.min_workers < 1 or c.min_workers > c.max_workers:

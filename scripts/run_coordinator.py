@@ -216,6 +216,14 @@ def main() -> int:
     if args.p2p_topic:
         peer_pubkeys = list(cfg.coordinator.allowed_node_pubkeys or [])
         if coord_identity and peer_pubkeys:
+            # Export effective allowlist so identity tunnel can hot-add/revoke peers from file updates
+            peer_file = checkpoint_dir / "allowed_peer_pubkeys.txt"
+            try:
+                peer_file.parent.mkdir(parents=True, exist_ok=True)
+                peer_file.write_text("\n".join(str(p).strip() for p in peer_pubkeys if str(p).strip()) + "\n", encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("could not write tunnel peer allowlist file %s: %s", peer_file, exc)
+                peer_file = None
             tunnel = HolepunchSidecar(
                 mode="tunnel-server",
                 topic=args.p2p_topic,
@@ -224,12 +232,16 @@ def main() -> int:
                 target_port=port,
                 identity=coord_identity,
                 peer_pubkeys=peer_pubkeys,
+                peer_pubkey_files=[str(peer_file)] if peer_file else None,
                 context=p2p_context,
             )
             tunnel.start()
             tunnel.wait_for_ready()
             sidecars.append(tunnel)
-            logging.info("coordinator available through identity bitbeam tunnel (%s peers, context=%s)", len(peer_pubkeys), p2p_context)
+            logging.info(
+                "coordinator available through identity bitbeam tunnel (%s peers, context=%s, allowlist_file=%s)",
+                len(peer_pubkeys), p2p_context, peer_file,
+            )
         else:
             if coord_identity and not peer_pubkeys:
                 logging.warning("--coordinator-identity set but no allowed peer pubkeys; falling back to topic tunnel")

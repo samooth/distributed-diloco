@@ -5,6 +5,7 @@ Supported modes:
 - ``int8``: per-tensor symmetric int8 quantization.
 - ``topk``: keep only the largest-magnitude entries of each tensor.
 - ``int8_topk``: top-k selection followed by int8 quantization.
+- ``zstd``: lossless Zstandard compression of the packed delta payload (if available).
 
 Top-k payloads store flattened indices and values plus the original shape.
 Error feedback is handled by the worker; this module only encodes/decodes the
@@ -12,7 +13,7 @@ payload that crosses the network.
 """
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Callable, Mapping, Optional
 
 import torch
 
@@ -23,7 +24,52 @@ INDICES_SUFFIX = ".__indices__"
 VALUES_SUFFIX = ".__values__"
 SHAPE_SUFFIX = ".__shape__"
 INT8_MAX = 127.0
-SUPPORTED_MODES = ("none", "int8", "topk", "int8_topk")
+SUPPORTED_MODES = ("none", "int8", "topk", "int8_topk", "zstd")
+
+_ZSTD_COMPRESS: Optional[Callable[[bytes], bytes]] = None
+_ZSTD_DECOMPRESS: Optional[Callable[[bytes], bytes]] = None
+_ZSTD_READY = False
+
+try:  # optional dependency
+    import zstandard as _zstd  # type: ignore
+
+    _cctx = _zstd.ZstdCompressor(level=3)
+    _dctx = _zstd.ZstdDecompressor()
+
+    def _zstd_compress(data: bytes) -> bytes:
+        return _cctx.compress(data)
+
+    def _zstd_decompress(data: bytes) -> bytes:
+        return _dctx.decompress(data)
+
+    _ZSTD_COMPRESS = _zstd_compress
+    _ZSTD_DECOMPRESS = _zstd_decompress
+    _ZSTD_READY = True
+except Exception:  # noqa: BLE001
+    try:
+        from compression import zstd as _pzstd  # type: ignore  # Python >=3.14
+
+        _ZSTD_COMPRESS = _pzstd.compress  # type: ignore[attr-defined]
+        _ZSTD_DECOMPRESS = _pzstd.decompress  # type: ignore[attr-defined]
+        _ZSTD_READY = True
+    except Exception:  # noqa: BLE001
+        _ZSTD_READY = False
+
+
+def zstd_available() -> bool:
+    return _ZSTD_READY
+
+
+def compress_bytes_zstd(data: bytes) -> bytes:
+    if not _ZSTD_READY or _ZSTD_COMPRESS is None:
+        raise ValueError("zstd compression requested but no zstd backend is available (install zstandard)")
+    return _ZSTD_COMPRESS(data)
+
+
+def decompress_bytes_zstd(data: bytes) -> bytes:
+    if not _ZSTD_READY or _ZSTD_DECOMPRESS is None:
+        raise ValueError("zstd decompression requested but no zstd backend is available (install zstandard)")
+    return _ZSTD_DECOMPRESS(data)
 
 
 def _numel(shape: torch.Size | tuple[int, ...]) -> int:
@@ -194,6 +240,9 @@ def compress_state(state: Mapping[str, torch.Tensor], mode: str, top_k_ratio: fl
         return encode_topk(state, top_k_ratio, int8=False)
     if mode == "int8_topk":
         return encode_topk(state, top_k_ratio, int8=True)
+    if mode == "zstd":
+        # zstd is applied at blob/transport packing level; tensor-level state remains dense here
+        return {key: value.detach().to("cpu", torch.float32).contiguous().clone() for key, value in state.items()}
     raise ValueError(f"unsupported delta compression: {mode!r}")
 
 
@@ -206,6 +255,8 @@ def decompress_state(state: Mapping[str, torch.Tensor], mode: str, top_k_ratio: 
         return decode_topk(state, int8=False)
     if mode == "int8_topk":
         return decode_topk(state, int8=True)
+    if mode == "zstd":
+        return {key: value.detach().to("cpu", torch.float32).contiguous().clone() for key, value in state.items()}
     raise ValueError(f"unsupported delta compression: {mode!r}")
 
 
