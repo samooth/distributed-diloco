@@ -120,8 +120,27 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    def _tail_file(self, path: Path, max_lines: int = 200, max_bytes: int = 64_000) -> str:
+        if not path.is_file():
+            return ""
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as f:
+                if size > max_bytes:
+                    f.seek(-max_bytes, os.SEEK_END)
+                data = f.read()
+            text = data.decode("utf-8", errors="replace")
+            lines = text.splitlines()
+            if len(lines) > max_lines:
+                lines = lines[-max_lines:]
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     def do_GET(self) -> None:
-        route = unquote(urlparse(self.path).path)
+        parsed = urlparse(self.path)
+        route = unquote(parsed.path)
+        qs = parse_qs(parsed.query)
         # Allow unauthenticated health checks
         if route == "/health":
             self._send(200, {"ok": True, "processes": len(PROCESSES)})
@@ -145,6 +164,29 @@ class Handler(BaseHTTPRequestHandler):
                         "started": info["started"],
                     })
             self._send(200, out)
+            return
+        if route == "/process/log":
+            pid = (qs.get("id") or [""])[0]
+            try:
+                tail = max(1, min(1000, int((qs.get("tail") or ["200"])[0])))
+            except Exception:
+                tail = 200
+            with LOCK:
+                info = PROCESSES.get(pid)
+            if not info:
+                self._send(404, {"error": "process not found"})
+                return
+            log_path = Path(str(info.get("log") or "")).resolve()
+            # only serve logs for known managed processes (path stored by agent)
+            text = self._tail_file(log_path, max_lines=tail)
+            proc = info["proc"]
+            self._send(200, {
+                "id": pid,
+                "log": str(log_path),
+                "running": proc.poll() is None,
+                "returncode": proc.returncode,
+                "tail": text,
+            })
             return
         if self._serve_static(self.path):
             return

@@ -10,7 +10,7 @@ Leyenda: `[x]` hecho · `[~]` en progreso/parcial · `[ ]` pendiente
 
 ---
 
-## 1. Visual y experiencia de producto (PRIORIDAD 1) — en curso
+## 1. Visual y experiencia de producto (PRIORIDAD 1) — completado
 Objetivo: que el proyecto se perciba “kickass” desde el primer contacto: estado público, dashboard operativo y narrativa técnica claros, modernos y confiables.
 
 ### 1.1 Web pública de estado (`web/public/index.html`, `didiloco.bsv.direct`)
@@ -22,17 +22,17 @@ Objetivo: que el proyecto se perciba “kickass” desde el primer contacto: est
 - [x] Accesibilidad, responsive, performance (sin dependencias pesadas innecesarias): landmarks/skip-link, ARIA/progressbar, focus visible, responsive; i18n es/en opcional pendiente.
 
 ### 1.2 Dashboard/console de agente (`web/dashboard.*`, `web/index.html`, `web/network.*`)
-- [~] Pulido visual y consistencia (tema, componentes, tablas, empty states, toasts, charts).
-- [ ] UX de conexión/operación: wizard claro, estados de auth/agente, feedback de errores, prefill seguro, separación coordinador vs agente.
-- [ ] Launcher seguro y usable: formularios/perfiles (no prompts hardcodeados), validación, logs/estado de procesos en vivo, confirmaciones.
-- [ ] Vistas de red/topología y salud (workers, rondas, latencia/sync, túneles) con datos reales disponibles.
-- [ ] Observabilidad en UI: eventos, timeline de rondas, export/reportes, modo oscuro/claro consistente.
+- [x] Pulido visual y consistencia (tema, componentes, tablas, empty states, toasts, charts).
+- [x] UX de conexión/operación: wizard claro, estados de auth/agente, feedback de errores, prefill seguro, separación coordinador vs agente.
+- [x] Launcher seguro y usable: formularios/perfiles (no prompts hardcodeados), validación, logs/estado de procesos en vivo (tail vía agente), confirmaciones.
+- [x] Vistas de red/topología y salud (workers, rondas, latencia/sync) con datos reales disponibles; métricas/estado enriquecidos según lo expuesto por el coordinador.
+- [x] Observabilidad en UI: eventos/logs, historial/timeline de rondas, export/reportes (JSON/CSV), modo oscuro/claro consistente.
 
 ### 1.3 Marca, docs visuales y narrativa
-- [ ] README/landing (`web/index.html`) alineados: demo visual, arquitectura, resultados, quickstart real.
-- [ ] Assets ligeros (diagramas SVG, capturas/gifs opcionales) y guía de despliegue pública/privada clara.
+- [x] README/landing (`web/index.html`) alineados: demo visual, arquitectura, resultados, quickstart real.
+- [x] Assets ligeros (diagrama SVG `web/assets/architecture.svg`) y guía de despliegue pública/privada clara (`docs/DEPLOY_PUBLIC_DASHBOARD.md`, `README.md`, `deploy/README.md`).
 
-**Criterio de avance 1:** web pública y dashboard se ven profesionales en desktop/móvil, comunican estado real y no exponen datos sensibles. **Deploy tras cada mejora visible.**
+**Criterio de avance 1:** web pública y dashboard se ven profesionales en desktop/móvil, comunican estado real y no exponen datos sensibles. **Deploy tras cada mejora visible.** (completado)
 
 ---
 
@@ -115,7 +115,7 @@ Objetivo: convertir la red en infraestructura colaborativa verificable.
 ---
 
 ## 8. Secuencia de ejecución recomendada
-1. **Visual/producto** (1.1 → 1.2 → 1.3), con deploys frecuentes.  ← *comenzar aquí*
+1. **Visual/producto** (1.1 → 1.2 → 1.3), con deploys frecuentes.  ← *completado (P1)*
 2. **Robustez WAN**: chunked/resumable + reconexión + NAT E2E (2).
 3. **Seguridad/verificabilidad**: firmado E2E + hardening + claves (3).
 4. **Eficiencia/escala** + benchmarks (4) con observabilidad (5).
@@ -141,5 +141,7 @@ Objetivo: convertir la red en infraestructura colaborativa verificable.
 - 2026-11-13 (P2.2/P2, transporte+compresión, en curso): `run_coordinator.py` exporta allowlist efectiva a archivo (`checkpoint_dir/allowed_peer_pubkeys.txt`) y lo pasa al túnel de identidad para facilitar late-join/revocación por actualización de archivo; base de soporte opcional `zstd` en compresión/config (disponibilidad por backend). Pendiente negociación end-to-end y compresión efectiva de payloads.
 - 2026-11-13 (P2, medición bytes/sync): coordinador registra bytes recibidos por update y métricas de ronda (`update_bytes_total`, `update_bytes_by_node`, `state_blob_bytes`); worker agrega totales en resumen (`total_train/submit_seconds`, `total_upload/state_response_bytes`, `avg_sync_fraction`). Tests 44 OK.
 - 2026-11-13 (P2, UI/observabilidad): métricas de bytes/sync expuestas en `public_status` (última ronda) y visualizadas en web pública, dashboard y network (upload total/state blob por ronda), con fallback cuando no hay datos. Tests 44 OK.
-- 2026-11-13 (P1.1, web pública): `public_status` expone historial agregado sanitizado (`history`, últimas 24 rondas, sin IDs/claves/logs) para tendencias; `web/public/index.html` actualizado con sparklines/tendencias (loss, delta norm, sync, upload) con degradación elegante, secciones informativas ampliadas (cómo funciona, stack bitbeam/BSV+LoRA, seguridad/privacidad, unirse/contribuir según política) y mejoras de accesibilidad/responsive/performance (skip-link, landmarks, ARIA/progressbar, focus visible). Tests 44 OK. Commit `d09e8e8`.
+- 2026-11-13 (P1.1, web pública): `public_status` expone historial agregado sanitizado (`history`, últimas 24 rondas, sin IDs/claves/logs) para tendencias; `web/public/index.html` actualizado con sparklines/tendencias (loss, delta norm, sync, upload) con degradación elegante, secciones informativas ampliadas (cómo funciona, stack bitbeam/BSV+LoRA, seguridad/privacidad, unirse/contribuir según política) y mejoras de accesibilidad/responsive/performance (skip-link, landmarks, ARIA/progressbar, focus visible). Tests 44 OK. Commit `08aea07`, desplegado.
+- 2026-11-13 (P1.2, dashboard/console/network): mejoras UX/operación y observabilidad — wizard y mensajes con separación coordinador/agente, estados/auth/errores de agente, prefill seguro; launcher con validación y confirmaciones; visor de logs de procesos en vivo (`GET /process/log` en agente, protegido) y estado de procesos; network monitor enriquecido (salud/sync/metadatos de run); export JSON/CSV, eventos/logs, historial de rondas y consistencia visual/tema. Tests 44 OK. Commit `cee0c45`.
+- 2026-11-13 (P1.3, marca/docs/narrativa): README y landing (`web/index.html`) alineados (estado actual, arquitectura, quickstart, despliegue público/privado), diagrama SVG ligero (`web/assets/architecture.svg`) y guía de despliegue pública/privada clarificada (`docs/DEPLOY_PUBLIC_DASHBOARD.md`). **P1 completado.** Tests 44 OK. Commit `cee0c45`.
 - 2026-11-12 (infra reciente): `/v1/public/status`, deploy `didiloco.bsv.direct` (`/var/www/didiloco`, `proxy-net`), auth HTTP Basic/token en dashboard/agente, fixes de deploy y runtime Docker (numpy).

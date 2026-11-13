@@ -31,7 +31,7 @@
         <span class="brand-mark">◆</span>
         <div>
           <div class="brand-title">DiLoCo Network Monitor</div>
-          <div class="brand-sub">Estado de la red Hyperswarm y nodos</div>
+          <div class="brand-sub">Topología, salud y rondas (datos del coordinador)</div>
         </div>
       </div>
       <div class="conn">
@@ -39,19 +39,22 @@
           <option value="direct">Directo (HTTP)</option>
           <option value="hyperswarm">Hyperswarm (túnel local)</option>
         </select>
-        <input id="coord-url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" />
-        <input id="gw-url" type="text" placeholder="ws://127.0.0.1:8080" value="ws://127.0.0.1:8080" />
-        <input id="token" type="password" placeholder="token" />
+        <input id="coord-url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" title="URL del coordinador" />
+        <input id="gw-url" type="text" placeholder="ws://127.0.0.1:8080" value="ws://127.0.0.1:8080" title="Gateway WebSocket (opcional)" />
+        <input id="token" type="password" placeholder="token" title="Token coordinador (si aplica)" />
         <button id="connect" class="btn btn-primary">Conectar</button>
         <button id="disconnect" class="btn btn-ghost" disabled>Desconectar</button>
       </div>
-      <div id="status-pill" class="pill pill-idle">Desconectado</div>
+      <div class="topbar-right">
+        <div id="status-pill" class="pill pill-idle">Desconectado</div>
+        <button id="theme-toggle" class="btn btn-icon" title="Alternar tema">☀️</button>
+      </div>
     </header>
 
     <main class="main">
       <section class="panel panel-full">
         <div class="panel-head">
-          <h2>Topología de red</h2>
+          <h2>Topología de red (agregada)</h2>
           <span id="topo-meta" class="panel-meta">—</span>
         </div>
         <div id="topology" class="topology">
@@ -61,12 +64,12 @@
       </section>
 
       <section class="kpis">
-        <div class="kpi"><span class="kpi-label">Nodos activos</span><span id="k-nodes" class="kpi-value">—</span></div>
-        <div class="kpi"><span class="kpi-label">Ronda</span><span id="k-round" class="kpi-value">—</span></div>
-        <div class="kpi"><span class="kpi-label">Pendientes</span><span id="k-pending" class="kpi-value">—</span></div>
-        <div class="kpi"><span class="kpi-label">Quórum</span><span id="k-quorum" class="kpi-value">—</span></div>
-        <div class="kpi"><span class="kpi-label">Peers Hyperswarm</span><span id="k-peers" class="kpi-value">—</span></div>
-        <div class="kpi"><span class="kpi-label">Estado</span><span id="k-state" class="kpi-value">—</span></div>
+        <div class="kpi"><span class="kpi-label">Nodos activos</span><span id="k-nodes" class="kpi-value">—</span><span id="k-nodes-sub" class="kpi-sub">registrados</span></div>
+        <div class="kpi"><span class="kpi-label">Ronda</span><span id="k-round" class="kpi-value">—</span><span id="k-round-sub" class="kpi-sub">actual / max</span></div>
+        <div class="kpi"><span class="kpi-label">Pendientes</span><span id="k-pending" class="kpi-value">—</span><span id="k-pending-sub" class="kpi-sub">updates</span></div>
+        <div class="kpi"><span class="kpi-label">Quórum</span><span id="k-quorum" class="kpi-value">—</span><span id="k-quorum-sub" class="kpi-sub">mínimo requerido</span></div>
+        <div class="kpi"><span class="kpi-label">Últ. sync</span><span id="k-sync" class="kpi-value">—</span><span id="k-sync-sub" class="kpi-sub">segundos</span></div>
+        <div class="kpi"><span class="kpi-label">Estado</span><span id="k-state" class="kpi-value">—</span><span id="k-state-sub" class="kpi-sub">run</span></div>
       </section>
 
       <section class="grid">
@@ -103,7 +106,7 @@
             <button id="clear-logs" class="btn btn-ghost btn-sm">Limpiar</button>
           </div>
         </div>
-        <div id="logs" class="logs"></div>
+        <div id="logs" class="logs" aria-live="polite"></div>
       </section>
     </main>
   </div>

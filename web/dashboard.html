@@ -31,7 +31,7 @@
         <span class="brand-mark">◆</span>
         <div>
           <div class="brand-title">DiLoCo Console</div>
-          <div class="brand-sub">Distributed Low-Communication Training</div>
+          <div class="brand-sub">Monitor y launcher de entrenamiento distribuido</div>
         </div>
       </div>
       <div class="conn">
@@ -39,20 +39,22 @@
           <option value="direct">Directo (HTTP)</option>
           <option value="hyperswarm">Hyperswarm (túnel local)</option>
         </select>
-        <input id="url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" />
-        <input id="token" type="password" placeholder="token" />
-        <input id="agent-url" type="text" placeholder="agent http://127.0.0.1:8765" value="http://127.0.0.1:8765" />
-        <select id="interval">
-          <option value="2000">2s</option>
+        <input id="url" type="text" placeholder="http://127.0.0.1:8095" value="http://127.0.0.1:8095" title="URL del coordinador" />
+        <input id="token" type="password" placeholder="token" title="Token/coordinador (si aplica)" />
+        <input id="agent-url" type="text" placeholder="agent http://127.0.0.1:8765" value="http://127.0.0.1:8765" title="URL del agente (launcher/procesos)" />
+        <select id="interval" title="Intervalo de refresco">
+          <option value="1000">1s</option>
+          <option value="2000" selected>2s</option>
           <option value="5000">5s</option>
           <option value="10000">10s</option>
         </select>
         <button id="connect" class="btn btn-primary">Conectar</button>
         <button id="disconnect" class="btn btn-ghost" disabled>Desconectar</button>
       </div>
-      <div id="status-pill" class="pill pill-idle">Desconectado</div>
-      <div id="live-pill" class="live-pill">● en vivo</div>
-      <button id="theme-toggle" class="btn btn-ghost" title="Cambiar tema">🌙</button>
+      <div class="topbar-right">
+        <div id="status-pill" class="pill pill-idle">Desconectado</div>
+        <button id="theme-toggle" class="btn btn-icon" title="Alternar tema">☀️</button>
+      </div>
     </header>
 
     <main class="main">
@@ -77,11 +79,12 @@
         <div class="panel-head">
           <h2>Launcher (agente)</h2>
           <div class="panel-actions">
+            <span id="agent-status" class="pill pill-idle" title="Estado de conexión al agente">Agente: —</span>
             <button id="toggle-launcher-config" class="btn btn-ghost btn-sm">Mostrar configuración</button>
             <button id="refresh-procs" class="btn btn-ghost btn-sm">Refrescar</button>
           </div>
         </div>
-        <p class="panel-note">El agente debe estar accesible en <span class="mono">Agent URL</span> (arriba). Si el agente tiene token, el navegador pedirá login HTTP Basic (contraseña = <span class="mono">AGENT_TOKEN</span>). Los procesos se ejecutan en la máquina del agente.</p>
+        <p class="panel-note">Controla procesos en la máquina del <strong>agente</strong> (<span class="mono">Agent URL</span>). La conexión del dashboard al <strong>coordinador</strong> se configura arriba (URL/token). Si el agente requiere token, el navegador pedirá HTTP Basic (contraseña = <span class="mono">AGENT_TOKEN</span>).</p>
 
         <div id="launcher-config" class="launcher-config" hidden>
           <div class="launcher-grid">
@@ -133,9 +136,19 @@
 
         <div class="table-wrap">
           <table id="procs-table">
-            <thead><tr><th>ID</th><th>PID</th><th>Estado</th><th>Comando</th><th>Log</th><th>Acción</th></tr></thead>
+            <thead><tr><th>ID</th><th>PID</th><th>Estado</th><th>Comando</th><th>Log</th><th>Acciones</th></tr></thead>
             <tbody><tr><td colspan="6" class="empty">Sin datos (pulsa Refrescar)</td></tr></tbody>
           </table>
+        </div>
+        <div id="proc-log-panel" class="proc-log-panel" hidden>
+          <div class="proc-log-head">
+            <strong id="proc-log-title">Log de proceso</strong>
+            <div class="proc-log-actions">
+              <button id="proc-log-refresh" class="btn btn-ghost btn-sm">Actualizar</button>
+              <button id="proc-log-close" class="btn btn-ghost btn-sm">Cerrar</button>
+            </div>
+          </div>
+          <pre id="proc-log-content" class="proc-log-content">—</pre>
         </div>
       </section>
 
@@ -156,7 +169,10 @@
         <div class="panel">
           <div class="panel-head">
             <h2>Historial de rondas</h2>
-            <span id="rounds-count" class="panel-meta">0</span>
+            <div class="panel-actions">
+              <span id="rounds-count" class="panel-meta">0</span>
+              <button id="export-csv" class="btn btn-ghost btn-sm" title="Exportar historial de rondas a CSV">Exportar CSV</button>
+            </div>
           </div>
           <div class="table-wrap">
             <table id="rounds-table">
@@ -175,14 +191,14 @@
             <button id="export-json" class="btn btn-ghost btn-sm">Exportar JSON</button>
           </div>
         </div>
-        <div id="logs" class="logs"></div>
+        <div id="logs" class="logs" aria-live="polite"></div>
       </section>
     </main>
   </div>
 
   <div id="wizard" class="wizard-overlay">
-    <div class="wizard">
-      <div class="wizard-progress">
+    <div class="wizard" role="dialog" aria-modal="true" aria-labelledby="wizard-title-1">
+      <div class="wizard-progress" aria-hidden="true">
         <span class="wizard-step-dot active" data-step="1"></span>
         <span class="wizard-step-dot" data-step="2"></span>
         <span class="wizard-step-dot" data-step="3"></span>
@@ -190,21 +206,22 @@
       </div>
       <div class="wizard-body">
         <div class="wizard-pane" data-pane="1">
-          <h2>Bienvenido a DiLoCo Console</h2>
-          <p>Este asistente te conecta a un coordinador DiLoCo en 4 pasos.</p>
+          <h2 id="wizard-title-1">Bienvenido a DiLoCo Console</h2>
+          <p>Este asistente configura la conexión al <strong>coordinador</strong> (estado/rondas). El <strong>agente</strong> (launcher de procesos) se configura en la barra superior (<span class="mono">Agent URL</span>) y puede requerir autenticación independiente.</p>
           <div class="wizard-actions">
             <button class="btn btn-primary" data-next>Empezar</button>
             <button class="btn btn-ghost" data-skip>Saltar</button>
           </div>
         </div>
         <div class="wizard-pane" data-pane="2" hidden>
-          <h2>Paso 1 · Conexión</h2>
+          <h2>Paso 1 · Conexión al coordinador</h2>
           <label>URL del coordinador
             <input id="w-url" type="text" placeholder="http://127.0.0.1:8095" />
           </label>
-          <label>Token
+          <label>Token del coordinador (si aplica)
             <input id="w-token" type="password" placeholder="token" />
           </label>
+          <p class="wizard-hint">Para modo Hyperswarm/P2P usa el túnel local (p. ej. <span class="mono">http://127.0.0.1:18080</span>).</p>
           <div class="wizard-actions">
             <button class="btn btn-ghost" data-back>Atrás</button>
             <button class="btn btn-primary" data-next>Siguiente</button>
@@ -212,7 +229,7 @@
         </div>
         <div class="wizard-pane" data-pane="3" hidden>
           <h2>Paso 2 · Verificación</h2>
-          <p id="w-test-result">Pulsa "Probar conexión" para verificar.</p>
+          <p id="w-test-result" aria-live="polite">Pulsa "Probar conexión" para verificar acceso al coordinador.</p>
           <div class="wizard-actions">
             <button class="btn btn-ghost" id="w-test">Probar conexión</button>
             <button class="btn btn-ghost" data-back>Atrás</button>
@@ -230,7 +247,7 @@
       </div>
     </div>
   </div>
-  <div id="toasts" class="toasts"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
   <script src="./dashboard.js"></script>
 </body>
 </html>

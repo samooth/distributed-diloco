@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const log = (msg, level = "info") => {
   const el = $("logs");
+  if (!el) return;
   const line = document.createElement("div");
   line.className = "log-line";
   const t = new Date().toLocaleTimeString();
@@ -11,6 +12,7 @@ const log = (msg, level = "info") => {
 
 const toast = (msg, level = "info", ms = 3000) => {
   const container = $("toasts");
+  if (!container) return;
   const t = document.createElement("div");
   t.className = "toast " + level;
   t.textContent = msg;
@@ -18,16 +20,17 @@ const toast = (msg, level = "info", ms = 3000) => {
   setTimeout(() => { t.style.opacity = "0"; t.style.transform = "translateX(120%)"; setTimeout(() => t.remove(), 250); }, ms);
 };
 
-// Theme
 const applyTheme = (theme) => {
   document.body.classList.toggle("dark", theme === "dark");
-  $("theme-toggle").textContent = theme === "dark" ? "🌙" : "☀️";
+  const btn = $("theme-toggle");
+  if (btn) btn.textContent = theme === "dark" ? "🌙" : "☀️";
   localStorage.setItem("diloco-theme", theme);
 };
-$("theme-toggle").addEventListener("click", () => {
+$("theme-toggle")?.addEventListener("click", () => {
   applyTheme(document.body.classList.contains("dark") ? "light" : "dark");
 });
 applyTheme(localStorage.getItem("diloco-theme") || "light");
+
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtBytes = (v) => {
   if (v == null || !isFinite(Number(v))) return "—";
@@ -44,14 +47,14 @@ let connected = false;
 let lastStatus = null;
 
 function headers() {
-  const t = $("token").value.trim();
+  const t = ($("token")?.value || "").trim();
   const h = {};
   if (t) h["X-DiLoCo-Token"] = t;
   return h;
 }
 
 async function fetchJson(path) {
-  const base = $("url").value.trim().replace(/\/$/, "");
+  const base = ($("url")?.value || "").trim().replace(/\/$/, "");
   if (!base) throw new Error("URL del coordinador vacía");
   let res;
   try {
@@ -62,119 +65,118 @@ async function fetchJson(path) {
   if (!res.ok) {
     let text = "";
     try { text = (await res.text()).slice(0, 180); } catch (_) {}
-    if (res.status === 401) throw new Error("401 no autorizado: revisa el token del coordinador");
-    if (res.status === 403) throw new Error(`403 prohibido: ${text || "identidad/allowlist/política"}`);
-    throw new Error(`${res.status}${text ? " " + text : ""}`);
+    if (res.status === 401) throw new Error("401 no autorizado en coordinador: revisa el token");
+    if (res.status === 403) throw new Error(`403 prohibido en coordinador: ${text || "identidad/allowlist"}`);
+    throw new Error(`Coordinador ${res.status}${text ? " " + text : ""}`);
   }
   return res.json();
 }
 
 function setPill(text, cls) {
   const p = $("status-pill");
+  if (!p) return;
   p.textContent = text;
   p.className = "pill " + cls;
 }
 
-function drawSparkline(canvasId, values, colorVar) {
+function setAgentStatus(text, cls) {
+  const p = $("agent-status");
+  if (!p) return;
+  p.textContent = text;
+  p.className = "pill " + cls;
+}
+
+function drawChart(history) {
+  const canvas = $("chart");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!history || history.length < 2) {
+    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted").trim() || "#888";
+    ctx.font = "13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(history && history.length === 1 ? "Se necesita más de 1 ronda para graficar tendencia" : "Sin datos suficientes", w / 2, h / 2);
+    return;
+  }
+
+  const losses = history.map((r) => Number(r.train_loss));
+  const deltas = history.map((r) => Number(r.delta_norm));
+  const validLoss = losses.filter((v) => isFinite(v));
+  const validDelta = deltas.filter((v) => isFinite(v));
+  if (!validLoss.length || !validDelta.length) return;
+  const minL = Math.min(...validLoss), maxL = Math.max(...validLoss);
+  const minD = Math.min(...validDelta), maxD = Math.max(...validDelta);
+  const rangeL = maxL - minL || 1, rangeD = maxD - minD || 1;
+  const pad = 30, plotW = w - pad * 2, plotH = h - pad * 2;
+
+  const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#1f6feb";
+  const accent2 = getComputedStyle(document.body).getPropertyValue("--accent-2").trim() || "#7c3aed";
+
+  const drawLine = (data, min, range, color) => {
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    let started = false;
+    data.forEach((v, i) => {
+      if (!isFinite(v)) return;
+      const x = pad + (i / (data.length - 1)) * plotW;
+      const y = pad + plotH - ((v - min) / range) * plotH;
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  };
+
+  drawLine(losses, minL, rangeL, accent);
+  drawLine(deltas, minD, rangeD, accent2);
+
+  ctx.font = "11px sans-serif";
+  ctx.fillStyle = accent;
+  ctx.textAlign = "left";
+  ctx.fillText("— loss", pad, 14);
+  ctx.fillStyle = accent2;
+  ctx.fillText("— delta_norm", pad + 50, 14);
+}
+
+function drawSparkline(canvasId, data, cssVar) {
   const canvas = $(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
   canvas.width = rect.width * dpr;
-  canvas.height = 24 * dpr;
+  canvas.height = rect.height * dpr;
   ctx.scale(dpr, dpr);
-  const W = rect.width, H = 24;
-  ctx.clearRect(0, 0, W, H);
-  if (!values || values.length < 2) return;
-  const min = Math.min(...values), max = Math.max(...values);
-  const range = (max - min) || 1;
-  const color = getComputedStyle(document.body).getPropertyValue(colorVar).trim();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  const vals = (data || []).filter((v) => isFinite(v)).map(Number);
+  if (vals.length < 2) return;
+  const min = Math.min(...vals), max = Math.max(...vals), range = max - min || 1;
+  const color = getComputedStyle(document.body).getPropertyValue(cssVar).trim() || "#888";
+  ctx.beginPath();
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  values.forEach((v, i) => {
-    const x = (W * i) / (values.length - 1);
-    const y = H - ((v - min) / range) * (H - 4) - 2;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  vals.forEach((v, i) => {
+    const x = (i / (vals.length - 1)) * rect.width;
+    const y = rect.height - ((v - min) / range) * (rect.height - 4) - 2;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
   ctx.stroke();
 }
 
-function drawChart(history) {
-  const canvas = $("chart");
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * dpr;
-  canvas.height = 180 * dpr;
-  ctx.scale(dpr, dpr);
-  const W = rect.width, H = 180;
-  ctx.clearRect(0, 0, W, H);
-
-  const data = (history || []).slice().sort((a, b) => a.round - b.round);
-  if (data.length === 0) {
-    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted").trim();
-    ctx.font = "13px Inter, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("Sin datos de rondas", W / 2, H / 2);
-    $("chart-meta").textContent = "sin datos";
-    return;
-  }
-  $("chart-meta").textContent = `${data.length} rondas`;
-
-  const pad = { l: 44, r: 16, t: 16, b: 28 };
-  const plotW = W - pad.l - pad.r;
-  const plotH = H - pad.t - pad.b;
-
-  const losses = data.map((d) => Number(d.train_loss));
-  const deltas = data.map((d) => Number(d.delta_norm));
-  const minL = Math.min(...losses), maxL = Math.max(...losses);
-  const minD = Math.min(...deltas), maxD = Math.max(...deltas);
-  const rangeL = (maxL - minL) || 1;
-  const rangeD = (maxD - minD) || 1;
-
-  // grid
-  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--border").trim();
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.t + (plotH * i) / 4;
-    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-  }
-
-  const xAt = (i) => pad.l + (plotW * i) / Math.max(1, data.length - 1);
-  const yL = (v) => pad.t + plotH - ((v - minL) / rangeL) * plotH;
-  const yD = (v) => pad.t + plotH - ((v - minD) / rangeD) * plotH;
-
-  // loss line
-  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--accent").trim();
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  data.forEach((d, i) => {
-    const x = xAt(i), y = yL(Number(d.train_loss));
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  // delta line
-  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--accent-2").trim();
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath();
-  data.forEach((d, i) => {
-    const x = xAt(i), y = yD(Number(d.delta_norm));
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // legend
-  ctx.font = "11px Inter, sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--accent").trim();
-  ctx.fillText("loss", pad.l, H - 6);
-  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--accent-2").trim();
-  ctx.fillText("delta_norm", pad.l + 50, H - 6);
+function renderEmptyTables(msg = "Sin conexión al coordinador") {
+  const nt = document.querySelector("#nodes-table tbody");
+  const rt = document.querySelector("#rounds-table tbody");
+  if (nt) nt.innerHTML = `<tr><td colspan="3" class="empty">${escapeHtml(msg)}</td></tr>`;
+  if (rt) rt.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(msg)}</td></tr>`;
 }
 
 async function refresh() {
@@ -194,24 +196,28 @@ async function refresh() {
     $("k-pending-sub").textContent = "deltas recibidos";
 
     const lr = status.last_result;
-    $("k-loss").textContent = lr ? Number(lr.train_loss).toFixed(4) : "—";
+    $("k-loss").textContent = lr && isFinite(Number(lr.train_loss)) ? Number(lr.train_loss).toFixed(4) : "—";
     $("k-loss-sub").textContent = lr ? `ronda ${lr.round}` : "sin datos";
-    $("k-delta").textContent = lr ? Number(lr.delta_norm).toFixed(4) : "—";
+    $("k-delta").textContent = lr && isFinite(Number(lr.delta_norm)) ? Number(lr.delta_norm).toFixed(4) : "—";
     $("k-delta-sub").textContent = lr ? "agregado" : "—";
-    $("k-sync").textContent = lr ? Number(lr.sync_seconds).toFixed(2) : "—";
+    $("k-sync").textContent = lr && isFinite(Number(lr.sync_seconds)) ? Number(lr.sync_seconds).toFixed(2) : "—";
     $("k-sync-sub").textContent = lr ? "segundos" : "—";
 
-    // nodes table
     const nt = document.querySelector("#nodes-table tbody");
     nt.innerHTML = "";
-    status.registered.forEach((n) => {
+    if (!status.registered || status.registered.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="mono">${escapeHtml(n)}</td><td><span class="pill pill-ok">activo</span></td><td class="mono">—</td>`;
+      tr.innerHTML = `<td colspan="3" class="empty">Sin nodos registrados</td>`;
       nt.appendChild(tr);
-    });
-    $("nodes-count").textContent = status.registered.length;
+    } else {
+      status.registered.forEach((n) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="mono">${escapeHtml(n)}</td><td><span class="pill pill-ok">activo</span></td><td class="mono">—</td>`;
+        nt.appendChild(tr);
+      });
+    }
+    $("nodes-count").textContent = (status.registered || []).length;
 
-    // rounds table
     const rt = document.querySelector("#rounds-table tbody");
     rt.innerHTML = "";
     const hist = status.history || [];
@@ -223,11 +229,11 @@ async function refresh() {
       hist.slice().reverse().forEach((r) => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <td class="mono">${r.round}</td>
+          <td class="mono">${escapeHtml(r.round)}</td>
           <td>${(r.nodes || []).length}</td>
-          <td class="mono">${Number(r.train_loss).toFixed(4)}</td>
-          <td class="mono">${Number(r.delta_norm).toFixed(4)}</td>
-          <td class="mono">${Number(r.sync_seconds).toFixed(2)}</td>
+          <td class="mono">${isFinite(Number(r.train_loss)) ? Number(r.train_loss).toFixed(4) : "—"}</td>
+          <td class="mono">${isFinite(Number(r.delta_norm)) ? Number(r.delta_norm).toFixed(4) : "—"}</td>
+          <td class="mono">${isFinite(Number(r.sync_seconds)) ? Number(r.sync_seconds).toFixed(2) : "—"}</td>
           <td class="mono">${fmtBytes(r.update_bytes_total)}</td>
           <td class="mono">${fmtBytes(r.state_blob_bytes)}</td>`;
         rt.appendChild(tr);
@@ -238,31 +244,25 @@ async function refresh() {
     drawSparkline("spark-loss", hist.map((r) => Number(r.train_loss)), "--accent");
     drawSparkline("spark-delta", hist.map((r) => Number(r.delta_norm)), "--accent-2");
 
-    // run/meta info
-    const short = (s, n = 8) => (s ? String(s).slice(0, n) : "—");
+    const short = (s, n = 10) => (s ? String(s).slice(0, n) : "—");
     const metaParts = [`${hist.length} rondas`];
     if (status.run_id) metaParts.push(`run ${status.run_id}`);
     if (status.config_hash) metaParts.push(`cfg ${short(status.config_hash, 10)}`);
     if (status.base_hash) metaParts.push(`base ${short(status.base_hash, 8)}`);
+    if (status.finished) metaParts.push("finalizado");
+    else if (status.failure) metaParts.push("fallo");
     $("chart-meta").textContent = metaParts.join(" · ");
-
-    // nodes empty state
-    if (status.registered.length === 0) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="3" class="empty">Sin nodos registrados</td>`;
-      nt.appendChild(tr);
-    }
 
     if (lr && (!window._lastRound || window._lastRound !== lr.round)) {
       window._lastRound = lr.round;
-      log(`Ronda ${lr.round} completada: loss=${Number(lr.train_loss).toFixed(4)} delta_norm=${Number(lr.delta_norm).toFixed(4)} sync=${Number(lr.sync_seconds).toFixed(2)}s`, "info");
+      log(`Ronda ${lr.round} completada: loss=${isFinite(Number(lr.train_loss)) ? Number(lr.train_loss).toFixed(4) : "—"} delta_norm=${isFinite(Number(lr.delta_norm)) ? Number(lr.delta_norm).toFixed(4) : "—"} sync=${isFinite(Number(lr.sync_seconds)) ? Number(lr.sync_seconds).toFixed(2) : "—"}s`, "info");
     }
   } catch (e) {
     connected = false;
     setPill("Error", "pill-err");
     const msg = e && e.message ? e.message : String(e);
-    log(`Error de conexión: ${msg}`, "err");
-    // avoid spamming toasts every poll tick, but surface first/changed errors
+    log(`Error de conexión coordinador: ${msg}`, "err");
+    renderEmptyTables("Sin conexión al coordinador");
     if (window._lastConnErr !== msg) {
       window._lastConnErr = msg;
       toast(msg, "err", 4500);
@@ -272,7 +272,7 @@ async function refresh() {
 
 function startPolling() {
   if (timer) clearInterval(timer);
-  const ms = parseInt($("interval").value, 10);
+  const ms = parseInt($("interval")?.value || "2000", 10) || 2000;
   timer = setInterval(refresh, ms);
   refresh();
 }
@@ -281,7 +281,7 @@ function stopPolling() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-$("mode").addEventListener("change", () => {
+$("mode")?.addEventListener("change", () => {
   const mode = $("mode").value;
   if (mode === "hyperswarm") {
     $("url").value = "http://127.0.0.1:18080";
@@ -291,111 +291,125 @@ $("mode").addEventListener("change", () => {
   }
 });
 
-$("connect").addEventListener("click", () => {
+$("connect")?.addEventListener("click", () => {
   stopPolling();
   startPolling();
   $("connect").disabled = true;
   $("disconnect").disabled = false;
-  log("Conectando a " + $("url").value, "info");
+  log("Conectando al coordinador " + $("url").value, "info");
 });
 
-$("disconnect").addEventListener("click", () => {
+$("disconnect")?.addEventListener("click", () => {
   stopPolling();
   $("connect").disabled = false;
   $("disconnect").disabled = true;
   setPill("Desconectado", "pill-idle");
-  log("Desconectado", "warn");
+  renderEmptyTables("Desconectado");
+  log("Desconectado del coordinador", "warn");
 });
 
-$("clear-logs").addEventListener("click", () => { $("logs").innerHTML = ""; });
+$("clear-logs")?.addEventListener("click", () => { $("logs").innerHTML = ""; });
 
-$("export-json").addEventListener("click", () => {
-  if (!lastStatus) { log("Sin datos para exportar", "warn"); return; }
+$("export-json")?.addEventListener("click", () => {
+  if (!lastStatus) { log("Sin datos para exportar", "warn"); toast("Sin datos para exportar", "warn"); return; }
   const blob = new Blob([JSON.stringify(lastStatus, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = `diloco-status-${Date.now()}.json`; a.click();
   URL.revokeObjectURL(url);
+  toast("JSON exportado", "info");
+});
+
+$("export-csv")?.addEventListener("click", () => {
+  const hist = (lastStatus && lastStatus.history) || [];
+  if (!hist.length) { toast("Sin historial para exportar", "warn"); return; }
+  const cols = ["round","nodes_count","train_loss","delta_norm","sync_seconds","update_bytes_total","state_blob_bytes"];
+  const lines = [cols.join(",")];
+  hist.forEach((r) => {
+    const row = [
+      r.round ?? "",
+      (r.nodes || []).length,
+      r.train_loss ?? "",
+      r.delta_norm ?? "",
+      r.sync_seconds ?? "",
+      r.update_bytes_total ?? "",
+      r.state_blob_bytes ?? "",
+    ].map((v) => `"${String(v).replace(/"/g,'""')}"`);
+    lines.push(row.join(","));
+  });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `diloco-rounds-${Date.now()}.csv`; a.click();
+  URL.revokeObjectURL(url);
+  toast("CSV exportado", "info");
 });
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "r" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); refresh(); }
-  if (e.key === "Escape") { $("logs").innerHTML = ""; }
 });
-
 window.addEventListener("resize", () => { if (lastStatus) drawChart(lastStatus.history || []); });
 
 // Wizard
 let wizardStep = 1;
 const showWizard = (step) => {
   wizardStep = step;
-  document.querySelectorAll(".wizard-pane").forEach((p) => {
-    p.hidden = Number(p.dataset.pane) !== step;
-  });
+  document.querySelectorAll(".wizard-pane").forEach((p) => { p.hidden = Number(p.dataset.pane) !== step; });
   document.querySelectorAll(".wizard-step-dot").forEach((d) => {
     const s = Number(d.dataset.step);
     d.classList.toggle("active", s === step);
     d.classList.toggle("done", s < step);
   });
+  if (step === 2) {
+    if ($("w-url") && !$("w-url").value) $("w-url").value = $("url")?.value || "http://127.0.0.1:8095";
+    if ($("w-token") && !$("w-token").value) $("w-token").value = $("token")?.value || "";
+  }
   if (step === 4) {
-    const url = $("w-url").value.trim() || $("url").value.trim();
-    const token = $("w-token").value.trim() || $("token").value.trim();
-    $("w-summary").textContent = `URL: ${url} · Token: ${token ? "••••" : "(vacío)"}`;
+    const url = $("w-url")?.value.trim() || $("url")?.value.trim() || "";
+    const token = $("w-token")?.value.trim() || $("token")?.value.trim() || "";
+    $("w-summary").textContent = `Coordinador: ${url || "—"} · Token: ${token ? "configurado" : "(vacío)"}`;
   }
 };
-const closeWizard = () => { $("wizard").classList.add("hidden"); };
-const openWizard = () => { $("wizard").classList.remove("hidden"); showWizard(1); };
+const closeWizard = () => { $("wizard")?.classList.add("hidden"); };
+const openWizard = () => { $("wizard")?.classList.remove("hidden"); showWizard(1); };
 
-document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => {
-  if (wizardStep < 4) showWizard(wizardStep + 1);
-}));
-document.querySelectorAll("[data-back]").forEach((b) => b.addEventListener("click", () => {
-  if (wizardStep > 1) showWizard(wizardStep - 1);
-}));
-document.querySelector("[data-skip]").addEventListener("click", closeWizard);
-document.querySelector("[data-finish]").addEventListener("click", () => {
-  const url = $("w-url").value.trim() || $("url").value.trim();
-  const token = $("w-token").value.trim() || $("token").value.trim();
+document.querySelectorAll("[data-next]").forEach((b) => b.addEventListener("click", () => { if (wizardStep < 4) showWizard(wizardStep + 1); }));
+document.querySelectorAll("[data-back]").forEach((b) => b.addEventListener("click", () => { if (wizardStep > 1) showWizard(wizardStep - 1); }));
+document.querySelector("[data-skip]")?.addEventListener("click", () => { localStorage.setItem("diloco-wizard-done", "1"); closeWizard(); });
+document.querySelector("[data-finish]")?.addEventListener("click", () => {
+  const url = $("w-url")?.value.trim() || $("url")?.value.trim() || "";
+  const token = $("w-token")?.value.trim() || $("token")?.value.trim() || "";
   if (url) { $("url").value = url; localStorage.setItem("diloco-url", url); }
   if (token) { $("token").value = token; localStorage.setItem("diloco-token", token); }
+  localStorage.setItem("diloco-wizard-done", "1");
   closeWizard();
-  $("connect").click();
+  $("connect")?.click();
 });
 
-$("w-test").addEventListener("click", async () => {
-  const url = $("w-url").value.trim() || $("url").value.trim();
-  const token = $("w-token").value.trim() || $("token").value.trim();
+$("w-test")?.addEventListener("click", async () => {
+  const url = $("w-url")?.value.trim() || $("url")?.value.trim() || "";
+  const token = $("w-token")?.value.trim() || $("token")?.value.trim() || "";
   const btn = $("w-test");
   const nextBtn = document.querySelector('[data-pane="3"] [data-next]');
+  if (!url) { $("w-test-result").textContent = "Ingresa una URL del coordinador."; $("w-test-result").style.color = "var(--danger)"; return; }
   btn.disabled = true;
   btn.textContent = "Probando...";
   try {
-    const res = await fetch(url.replace(/\/$/, "") + "/v1/health", { headers: token ? { "X-DiLoCo-Token": token } : {} });
+    const res = await fetch(url.replace(/\/$/, "") + "/v1/health", { headers: token ? { "X-DiLoCo-Token": token } : {}, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     $("w-test-result").textContent = `OK · ronda ${data.round} · nodos ${data.registered} · ${data.failure || "sin errores"}`;
     $("w-test-result").style.color = "var(--success)";
-    nextBtn.disabled = false;
+    if (nextBtn) nextBtn.disabled = false;
   } catch (e) {
     $("w-test-result").textContent = `Error: ${e.message}`;
     $("w-test-result").style.color = "var(--danger)";
-    nextBtn.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
   } finally {
     btn.disabled = false;
     btn.textContent = "Probar conexión";
   }
 });
-
-// Auto-open wizard on first visit
-if (!localStorage.getItem("diloco-wizard-done")) {
-  openWizard();
-}
-document.querySelector("[data-finish]").addEventListener("click", () => {
-  localStorage.setItem("diloco-wizard-done", "1");
-}, { once: true });
-document.querySelector("[data-skip]").addEventListener("click", () => {
-  localStorage.setItem("diloco-wizard-done", "1");
-}, { once: true });
 
 // Auto-fill from URL params or saved settings
 const params = new URLSearchParams(window.location.search);
@@ -405,18 +419,21 @@ const paramAgentUrl = params.get("agent");
 const savedUrl = localStorage.getItem("diloco-url");
 const savedToken = localStorage.getItem("diloco-token");
 const savedAgentUrl = localStorage.getItem("diloco-agent-url");
-if (paramUrl) $("url").value = paramUrl;
-else if (savedUrl) $("url").value = savedUrl;
-if (paramToken) $("token").value = paramToken;
-else if (savedToken) $("token").value = savedToken;
+if (paramUrl) $("url").value = paramUrl; else if (savedUrl) $("url").value = savedUrl;
+if (paramToken) $("token").value = paramToken; else if (savedToken) $("token").value = savedToken;
 if ($("agent-url")) {
   if (paramAgentUrl) $("agent-url").value = paramAgentUrl;
   else if (savedAgentUrl) $("agent-url").value = savedAgentUrl;
   else if ($("agent-url").value === "http://127.0.0.1:8765" && location.protocol.startsWith("http") && !["127.0.0.1", "localhost"].includes(location.hostname)) {
     $("agent-url").value = location.origin;
   }
-  $("agent-url").addEventListener("change", () => localStorage.setItem("diloco-agent-url", $("agent-url").value.trim()));
+  $("agent-url").addEventListener("change", () => {
+    localStorage.setItem("diloco-agent-url", $("agent-url").value.trim());
+    refreshProcs();
+  });
 }
+
+if (!localStorage.getItem("diloco-wizard-done")) openWizard();
 
 // Launcher (agent)
 const LAUNCHER_STORAGE_KEY = "diloco-launcher-config-v1";
@@ -438,7 +455,7 @@ function loadLauncherConfig() {
     });
     const st = $("launcher-config-status");
     if (st) st.textContent = "configuración cargada";
-  } catch (_) { /* ignore */ }
+  } catch (_) {}
 }
 
 function saveLauncherConfig() {
@@ -470,27 +487,67 @@ function getNum(id, def = 0) {
 async function agentFetch(path, opts = {}) {
   const base = ($("agent-url")?.value || "").trim().replace(/\/$/, "");
   if (!base) throw new Error("Agent URL vacío");
-  const res = await fetch(base + path, { credentials: "same-origin", ...opts });
+  let res;
+  try {
+    res = await fetch(base + path, { credentials: "same-origin", cache: "no-store", ...opts });
+  } catch (e) {
+    throw new Error(`Agente no accesible (${e.message || e})`);
+  }
   if (res.status === 401) {
-    throw new Error("401 no autorizado (inicia sesión con AGENT_TOKEN en el agente)");
+    throw new Error("401 no autorizado (inicia sesión en el agente: contraseña = AGENT_TOKEN)");
   }
   if (!res.ok) {
     let detail = "";
-    try { detail = (await res.text()).slice(0, 120); } catch (_) {}
-    throw new Error(`${res.status}${detail ? " " + detail : ""}`);
+    try { detail = (await res.text()).slice(0, 160); } catch (_) {}
+    throw new Error(`Agente ${res.status}${detail ? " " + detail : ""}`);
   }
   return res.json();
 }
+
+let selectedProcLogId = null;
+let procLogTimer = null;
+
+async function loadProcLog(procId, opts = {}) {
+  if (!procId) return;
+  selectedProcLogId = procId;
+  const panel = $("proc-log-panel");
+  const title = $("proc-log-title");
+  const content = $("proc-log-content");
+  if (panel) panel.hidden = false;
+  if (title) title.textContent = `Log: ${procId}`;
+  if (content && !opts.silent) content.textContent = "Cargando…";
+  try {
+    const data = await agentFetch(`/process/log?id=${encodeURIComponent(procId)}&tail=220`);
+    if (selectedProcLogId !== procId) return;
+    const state = data.running ? "running" : `stopped (${data.returncode ?? "?"})`;
+    if (title) title.textContent = `Log: ${procId} · ${state}`;
+    if (content) content.textContent = (data.tail || "(log vacío)");
+  } catch (e) {
+    if (selectedProcLogId !== procId) return;
+    if (content) content.textContent = `Error: ${e.message}`;
+  }
+}
+
+function closeProcLog() {
+  selectedProcLogId = null;
+  if (procLogTimer) { clearInterval(procLogTimer); procLogTimer = null; }
+  const panel = $("proc-log-panel");
+  if (panel) panel.hidden = true;
+}
+
+$("proc-log-close")?.addEventListener("click", closeProcLog);
+$("proc-log-refresh")?.addEventListener("click", () => { if (selectedProcLogId) loadProcLog(selectedProcLogId); });
 
 async function refreshProcs() {
   const tb = document.querySelector("#procs-table tbody");
   if (!tb) return;
   try {
     const procs = await agentFetch("/processes");
+    setAgentStatus(`Agente: OK (${Array.isArray(procs) ? procs.length : 0})`, "pill-ok");
     tb.innerHTML = "";
     if (!Array.isArray(procs) || procs.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="6" class="empty">Sin procesos lanzados</td>`;
+      tr.innerHTML = `<td colspan="6" class="empty">Sin procesos lanzados en el agente</td>`;
       tb.appendChild(tr);
       return;
     }
@@ -498,31 +555,50 @@ async function refreshProcs() {
       const tr = document.createElement("tr");
       const cmd = (p.cmd || []).join(" ");
       const logPath = p.log || "";
+      const status = p.running ? '<span class="pill pill-ok">running</span>' : `<span class="pill pill-idle">stopped${p.returncode != null ? ` (${p.returncode})` : ""}</span>`;
+      const actions = [
+        `<button class="btn btn-ghost btn-sm" data-log="${escapeHtml(p.id)}">Ver log</button>`,
+        p.running ? `<button class="btn btn-ghost btn-sm" data-stop="${escapeHtml(p.id)}">Stop</button>` : ""
+      ].filter(Boolean).join(" ");
       tr.innerHTML = `
         <td class="mono">${escapeHtml(p.id || "")}</td>
         <td class="mono">${escapeHtml(p.pid ?? "")}</td>
-        <td>${p.running ? '<span class="pill pill-ok">running</span>' : '<span class="pill pill-idle">stopped</span>'}</td>
+        <td>${status}</td>
         <td class="mono"><span class="cmd-cell" title="${escapeHtml(cmd)}">${escapeHtml(cmd)}</span></td>
         <td class="mono"><span class="cmd-cell" title="${escapeHtml(logPath)}">${escapeHtml(logPath || "—")}</span></td>
-        <td>${p.running ? `<button class="btn btn-ghost btn-sm" data-stop="${escapeHtml(p.id)}">Stop</button>` : '<span class="muted">—</span>'}</td>`;
+        <td class="actions-cell">${actions || '<span class="muted">—</span>'}</td>`;
       tb.appendChild(tr);
     });
     tb.querySelectorAll("[data-stop]").forEach((b) => {
       b.addEventListener("click", async () => {
+        const id = b.dataset.stop;
+        if (!id) return;
+        if (!window.confirm(`¿Detener proceso ${id}?`)) return;
         try {
-          await agentFetch("/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.stop }) });
-          log(`Proceso ${b.dataset.stop} detenido`, "warn");
+          await agentFetch("/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+          log(`Proceso ${id} detenido`, "warn");
           toast("Proceso detenido", "warn");
           refreshProcs();
+          if (selectedProcLogId === id) loadProcLog(id);
         } catch (e) {
-          log(`Error al detener: ${e.message}`, "err");
+          log(`Error al detener ${id}: ${e.message}`, "err");
           toast(`Error al detener: ${e.message}`, "err", 4500);
         }
       });
     });
+    tb.querySelectorAll("[data-log]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = b.dataset.log;
+        loadProcLog(id);
+        if (procLogTimer) clearInterval(procLogTimer);
+        procLogTimer = setInterval(() => { if (selectedProcLogId === id) loadProcLog(id, { silent: true }); }, 3000);
+      });
+    });
   } catch (e) {
-    // Keep last known rows on transient errors? replace with a clear message
-    tb.innerHTML = `<tr><td colspan="6" class="empty">Agent: ${escapeHtml(e.message)}</td></tr>`;
+    const msg = e && e.message ? e.message : String(e);
+    if (/401/.test(msg)) setAgentStatus("Agente: no autorizado", "pill-err");
+    else setAgentStatus("Agente: sin conexión", "pill-idle");
+    tb.innerHTML = `<tr><td colspan="6" class="empty">Agent: ${escapeHtml(msg)}</td></tr>`;
   }
 }
 
@@ -544,6 +620,12 @@ function buildCoordinatorPayload() {
   return payload;
 }
 
+function validateCoordinatorPayload(p) {
+  if (!p.config) return "Config de coordinador requerida";
+  if (!Number.isFinite(Number(p.max_rounds)) || Number(p.max_rounds) < 1) return "max_rounds debe ser >= 1";
+  return null;
+}
+
 function buildWorkerPayload() {
   const payload = {
     config: getVal("lw-config") || "configs/smoke.json",
@@ -563,8 +645,20 @@ function buildWorkerPayload() {
   return payload;
 }
 
+function validateWorkerPayload(p) {
+  if (!p.config) return "Config de worker requerida";
+  if (!p.node_id) return "node_id requerido";
+  if (!/^[A-Za-z0-9._:-]+$/.test(p.node_id)) return "node_id contiene caracteres no recomendados";
+  if (!Number.isFinite(Number(p.shard_id)) || Number(p.shard_id) < 0) return "shard_id debe ser >= 0";
+  if (!p.coordinator && !p.p2p_topic) return "Indica Coordinator URL o P2P topic";
+  return null;
+}
+
 $("launch-coord")?.addEventListener("click", async () => {
   const payload = buildCoordinatorPayload();
+  const err = validateCoordinatorPayload(payload);
+  if (err) { toast(err, "err", 4000); log(`Validación launcher: ${err}`, "err"); return; }
+  if (!window.confirm(`¿Lanzar coordinador con config ${payload.config} (max_rounds=${payload.max_rounds}, device=${payload.device})?`)) return;
   try {
     const r = await agentFetch("/launch/coordinator", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     log(`Coordinador lanzado: ${r.id}`, "info");
@@ -578,6 +672,9 @@ $("launch-coord")?.addEventListener("click", async () => {
 
 $("launch-worker")?.addEventListener("click", async () => {
   const payload = buildWorkerPayload();
+  const err = validateWorkerPayload(payload);
+  if (err) { toast(err, "err", 4000); log(`Validación launcher: ${err}`, "err"); return; }
+  if (!window.confirm(`¿Lanzar worker ${payload.node_id} (shard=${payload.shard_id}, device=${payload.device})?`)) return;
   try {
     const r = await agentFetch("/launch/worker", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     log(`Worker lanzado: ${r.id} (${payload.node_id})`, "info");
@@ -601,13 +698,12 @@ $("save-launcher-config")?.addEventListener("click", saveLauncherConfig);
 // Prefill launcher defaults from coordinator connection when useful
 (() => {
   const coordUrl = ($("url")?.value || "").trim();
-  const token = ($("token")?.value || "").trim();
   if (coordUrl && !$("lw-coordinator")?.value) setVal("lw-coordinator", coordUrl);
-  // keep token handling separate (coordinator token is for dashboard->coordinator API)
 })();
 
 loadLauncherConfig();
+renderEmptyTables("Desconectado");
+setAgentStatus("Agente: comprobando…", "pill-idle");
 setInterval(refreshProcs, 5000);
 refreshProcs();
-
 log("Dashboard listo. Conecta al coordinador y, si usas launcher, revisa Agent URL/configuración.", "info");

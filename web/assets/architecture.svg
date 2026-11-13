@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" role="img" aria-labelledby="title desc">
+  <title id="title">Arquitectura DiLoCo WAN</title>
+  <desc id="desc">Coordinador agrega deltas LoRA de workers sobre WAN mediante bitbeam/BSV y distribuye estado global reanudable.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#7dd3fc"/>
+    </marker>
+    <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#a5b4fc"/>
+    </marker>
+  </defs>
+  <rect width="960" height="360" rx="20" fill="url(#bg)"/>
+  <rect x="1" y="1" width="958" height="358" rx="19" fill="none" stroke="#334155"/>
+
+  <text x="480" y="42" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="22" font-weight="700" fill="#e5e7eb">DiLoCo WAN · LoRA sync sobre internet</text>
+  <text x="480" y="64" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#94a3b8">Entrenamiento local H pasos + sincronización periódica de deltas (Nesterov outer)</text>
+
+  <g transform="translate(390,110)">
+    <rect x="0" y="0" width="180" height="120" rx="16" fill="#0f172a" stroke="url(#accent)" stroke-width="2" filter="url(#glow)"/>
+    <text x="90" y="34" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="17" font-weight="700" fill="#e5e7eb">Coordinador</text>
+    <text x="90" y="56" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#94a3b8">quorum · agregación</text>
+    <text x="90" y="74" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#94a3b8">estado blob + manifest</text>
+    <text x="90" y="92" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#94a3b8">/v1/public/status</text>
+    <text x="90" y="110" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="10" fill="#67e8f9">métricas sanitizadas</text>
+  </g>
+
+  <g font-family="Inter,Segoe UI,sans-serif">
+    <g transform="translate(70,78)">
+      <rect x="0" y="0" width="170" height="92" rx="14" fill="#0f172a" stroke="#334155"/>
+      <text x="85" y="30" text-anchor="middle" font-size="15" font-weight="600" fill="#e5e7eb">Worker A</text>
+      <text x="85" y="50" text-anchor="middle" font-size="11" fill="#94a3b8">base congelada + LoRA</text>
+      <text x="85" y="68" text-anchor="middle" font-size="11" fill="#94a3b8">GPU doméstica</text>
+      <text x="85" y="84" text-anchor="middle" font-size="10" fill="#86efac">entrena local · Δ</text>
+    </g>
+    <g transform="translate(70,190)">
+      <rect x="0" y="0" width="170" height="92" rx="14" fill="#0f172a" stroke="#334155"/>
+      <text x="85" y="30" text-anchor="middle" font-size="15" font-weight="600" fill="#e5e7eb">Worker B</text>
+      <text x="85" y="50" text-anchor="middle" font-size="11" fill="#94a3b8">shard / datos locales</text>
+      <text x="85" y="68" text-anchor="middle" font-size="11" fill="#94a3b8">cache estado reanudable</text>
+      <text x="85" y="84" text-anchor="middle" font-size="10" fill="#86efac">resume + verify</text>
+    </g>
+    <g transform="translate(720,134)">
+      <rect x="0" y="0" width="170" height="92" rx="14" fill="#0f172a" stroke="#334155"/>
+      <text x="85" y="30" text-anchor="middle" font-size="15" font-weight="600" fill="#e5e7eb">Worker C</text>
+      <text x="85" y="50" text-anchor="middle" font-size="11" fill="#94a3b8">churn / rejoin</text>
+      <text x="85" y="68" text-anchor="middle" font-size="11" fill="#94a3b8">reintentos/backoff</text>
+      <text x="85" y="84" text-anchor="middle" font-size="10" fill="#86efac">≤ 2 rondas recovery</text>
+    </g>
+  </g>
+
+  <g stroke-width="2" fill="none">
+    <path d="M240 124 C300 124, 330 150, 390 155" stroke="#7dd3fc" marker-end="url(#arrow)"/>
+    <path d="M390 185 C330 185, 300 210, 240 236" stroke="#a5b4fc" marker-end="url(#arrow2)"/>
+    <path d="M240 236 C300 236, 330 205, 390 195" stroke="#7dd3fc" marker-end="url(#arrow)"/>
+    <path d="M390 145 C330 145, 300 130, 240 124" stroke="#a5b4fc" marker-end="url(#arrow2)"/>
+    <path d="M720 170 C660 170, 620 168, 570 168" stroke="#7dd3fc" marker-end="url(#arrow)"/>
+    <path d="M570 188 C620 188, 660 190, 720 190" stroke="#a5b4fc" marker-end="url(#arrow2)"/>
+  </g>
+
+  <g font-family="JetBrains Mono,monospace" font-size="11">
+    <text x="312" y="118" fill="#7dd3fc">Δ LoRA + métricas</text>
+    <text x="286" y="248" fill="#a5b4fc">estado global (chunked/resume)</text>
+    <text x="598" y="156" fill="#7dd3fc">update</text>
+    <text x="598" y="214" fill="#a5b4fc">state</text>
+  </g>
+
+  <g transform="translate(300,268)">
+    <rect x="0" y="0" width="360" height="62" rx="12" fill="#0b1220" stroke="#334155"/>
+    <text x="180" y="24" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="13" font-weight="600" fill="#e5e7eb">Transporte y confianza</text>
+    <text x="180" y="44" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#94a3b8">HTTP/gRPC · bitbeam v4 (DHT/mux) · BSV identidad/admisión (MVP)</text>
+  </g>
+</svg>

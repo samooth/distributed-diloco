@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DiLoCo WAN — Distributed Low-Communication Training</title>
-  <meta name="description" content="Entrena adaptadores LoRA de 32B/70B sobre internet con DiLoCo: int8, top-k, error feedback, churn, WAN emulation y transporte BSV + bitbeam." />
+  <meta name="description" content="Entrena adaptadores LoRA sobre internet con DiLoCo: sincronización periódica, compresión, tolerancia a churn, estado reanudable y transporte BSV + bitbeam." />
   <meta name="theme-color" content="#0b1220" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="DiLoCo WAN" />
   <meta property="og:title" content="DiLoCo WAN — Distributed Low-Communication Training" />
-  <meta property="og:description" content="Entrena adaptadores LoRA de 32B/70B sobre internet con DiLoCo: compresión, tolerancia a churn y transporte BSV + bitbeam." />
+  <meta property="og:description" content="Entrena adaptadores LoRA sobre internet con DiLoCo: compresión, tolerancia a churn, estado reanudable y transporte BSV + bitbeam." />
   <meta property="og:image" content="og-main.png" />
   <meta property="og:image:type" content="image/png" />
   <meta property="og:image:width" content="1200" />
@@ -17,7 +17,7 @@
   <meta property="og:image:alt" content="DiLoCo WAN — entrenamiento distribuido de LLMs con LoRA" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="DiLoCo WAN — Distributed Low-Communication Training" />
-  <meta name="twitter:description" content="Entrena adaptadores LoRA de 32B/70B sobre internet con DiLoCo, BSV + bitbeam." />
+  <meta name="twitter:description" content="Entrena adaptadores LoRA sobre internet con DiLoCo, BSV + bitbeam." />
   <meta name="twitter:image" content="og-main.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -42,7 +42,7 @@
         <a href="#arquitectura">Arquitectura</a>
         <a href="#estado">Estado</a>
         <a href="#resultados">Resultados</a>
-        <a href="#roadmap">Roadmap</a>
+        <a href="#despliegue">Despliegue</a>
         <a href="#inicio">Inicio rápido</a>
         <a href="dashboard.html">Console</a>
         <a href="network.html">Network</a>
@@ -52,278 +52,211 @@
   </header>
 
   <main>
-    <!-- HERO -->
     <section class="hero">
-      <div class="hero-badge">v0.3 · 39 tests OK · BSV + bitbeam · auth dashboard · estado público live</div>
+      <div class="hero-badge">v0.4 · 44 tests OK · estado público live · dashboard protegido · P1 visual en curso</div>
       <h1 class="hero-title">
-        Entrena LLMs de <span class="grad">32B / 70B</span><br />
+        Entrena LLMs con <span class="grad">LoRA</span><br />
         sobre internet, sin datacenter.
       </h1>
       <p class="hero-sub">
-        DiLoCo WAN adapta modelos grandes con <strong>QLoRA</strong> sincronizando
-        solo el adaptador cada <code>H</code> pasos. Transporte <strong>bitbeam</strong> (DHT),
-        identidad/admisión <strong>BSV</strong> (MVP), compresión, tolerancia a churn y operación sobre WAN.
+        DiLoCo WAN sincroniza solo adaptadores LoRA cada <code>H</code> pasos (outer Nesterov),
+        con descarga de estado <strong>reanudable/verificada</strong>, tolerancia a churn y transporte
+        <strong>bitbeam</strong> (DHT) con identidad/admisión <strong>BSV</strong> (MVP).
       </p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="#inicio">Empezar</a>
-        <a class="btn btn-ghost" href="/api/status" target="_blank" rel="noopener">Estado público</a>
+        <a class="btn btn-ghost" href="https://didiloco.bsv.direct/api/status" target="_blank" rel="noopener">Estado público</a>
+        <a class="btn btn-ghost" href="dashboard.html">Console privada</a>
       </div>
       <div class="hero-stats">
-        <div class="stat"><span class="stat-num">39</span><span class="stat-label">tests OK</span></div>
+        <div class="stat"><span class="stat-num">44</span><span class="stat-label">tests OK</span></div>
         <div class="stat"><span class="stat-num">4×</span><span class="stat-label">compresión int8</span></div>
-        <div class="stat"><span class="stat-num">BSV</span><span class="stat-label">identidad + admisión</span></div>
+        <div class="stat"><span class="stat-num">Resume</span><span class="stat-label">estado chunked/verificado</span></div>
         <div class="stat"><span class="stat-num">WAN</span><span class="stat-label">bitbeam + churn</span></div>
       </div>
     </section>
 
-    <!-- PROBLEMA -->
     <section id="problema" class="section">
       <div class="section-head">
         <span class="eyebrow">El problema</span>
-        <h2>La latencia no es el cuello de botella. Lo son el ancho de banda, la estabilidad y la VRAM.</h2>
+        <h2>En WAN pesan el ancho de banda, la inestabilidad y la memoria.</h2>
       </div>
       <div class="grid-3">
         <div class="card">
           <div class="card-icon">📡</div>
-          <h3>Ancho de banda de subida</h3>
-          <p>Un delta de 70B en bf16 son 140 GB por ronda. DiLoCo amortiza la latencia
-            sincronizando cada H pasos, pero sigue moviendo el delta completo.</p>
+          <h3>Coste de sincronización</h3>
+          <p>Replicar pesos completos es inviable en internet. DiLoCo sincroniza periódicamente solo deltas de adaptadores LoRA, con compresión y métricas de sync/bytes.</p>
         </div>
         <div class="card">
           <div class="card-icon">🌪️</div>
-          <h3>Inestabilidad de nodos</h3>
-          <p>Nodos domésticos aparecen y desaparecen. Deadlines, expulsión, rejoin y
-            late join evitan que un straggler bloquee la ronda.</p>
+          <h3>Churn y cortes</h3>
+          <p>Nodos domésticos se desconectan o llegan tarde. El sistema usa quorum, heartbeats, reintentos/backoff, re-registro y descarga de estado reanudable/verificada.</p>
         </div>
         <div class="card">
           <div class="card-icon">🧠</div>
-          <h3>Memoria de GPU</h3>
-          <p>70B en NF4 ≈ 35–40 GB. QLoRA congela la base y sincroniza solo el
-            adaptador: de 140 GB a 0.07–0.8 GB por ronda.</p>
+          <h3>VRAM limitada</h3>
+          <p>QLoRA congela la base y entrena adaptadores ligeros, permitiendo iterar en hardware modesto y escalar la receta hacia modelos mayores por isla.</p>
         </div>
       </div>
     </section>
 
-    <!-- ARQUITECTURA -->
     <section id="arquitectura" class="section">
       <div class="section-head">
         <span class="eyebrow">Arquitectura</span>
-        <h2>Estrella con coordinador. Una isla = una unidad de sincronización.</h2>
+        <h2>Coordinación por rondas, estado verificable y transporte resiliente.</h2>
       </div>
-      <div class="arch">
-        <div class="arch-coord">
-          <div class="arch-box coord">
-            <strong>Coordinador</strong>
-            <small>membership · leases · agregación Nesterov · checkpoints · métricas</small>
-          </div>
-        </div>
-        <div class="arch-line"></div>
-        <div class="arch-islands">
-          <div class="arch-box island">
-            <strong>Isla A</strong>
-            <small>1–8 GPUs · base NF4 · LoRA local</small>
-          </div>
-          <div class="arch-box island">
-            <strong>Isla B</strong>
-            <small>1–8 GPUs · base NF4 · LoRA local</small>
-          </div>
-          <div class="arch-box island">
-            <strong>Isla C</strong>
-            <small>1–8 GPUs · base NF4 · LoRA local</small>
-          </div>
-        </div>
-        <p class="arch-note">
-          Transporte: HTTP/1.0 + token → gRPC/mTLS opcional → túnel Hyperswarm P2P.
-          Checkpoints en object store local o S3. WAN emulation con proxy TCP.
-        </p>
+      <div class="card" style="margin-bottom:18px;overflow:auto">
+        <img src="./assets/architecture.svg" alt="Diagrama de arquitectura DiLoCo WAN: coordinador, workers, deltas LoRA, estado chunked/reanudable y transporte bitbeam/BSV" style="width:100%;max-width:960px;display:block;margin:0 auto;border-radius:12px;border:1px solid rgba(148,163,184,0.15)" loading="lazy" />
       </div>
       <div class="grid-2">
         <div class="card">
           <h3>Una ronda, paso a paso</h3>
           <ol class="steps">
-            <li><code>RoundStart</code>: versión global, hash de base, config, deadline.</li>
-            <li>Cada isla entrena <code>H</code> pasos locales (AdamW) y calcula <code>Δ_i = θ_global − θ_local</code>.</li>
-            <li>Subida del delta comprimido y firmado; validación de hash, ronda, shape y norma.</li>
-            <li>Agregación <code>Δ̄ = mean(Δ_i)</code>, paso Nesterov exterior → <code>θ_global'</code>.</li>
-            <li>Publicación del nuevo adaptador y manifiesto; checkpoint cada N rondas.</li>
+            <li><code>RoundStart</code>: versión global, hashes/base/config y metadatos de estado.</li>
+            <li>Cada worker entrena <code>H</code> pasos locales y calcula el delta del adaptador LoRA.</li>
+            <li>Envía el delta (comprimido/validado); el coordinador espera quorum/deadlines.</li>
+            <li>Agregación y paso exterior Nesterov → nuevo estado global.</li>
+            <li>Publicación de estado blob (chunked/resumable/verificado) y checkpoint según política.</li>
           </ol>
         </div>
         <div class="card">
-          <h3>Compresión y robustez</h3>
+          <h3>Robustez y confianza (actual)</h3>
           <ul class="bullets">
-            <li><strong>int8</strong> por tensor (escala fp32): 4× menos bytes.</li>
-            <li><strong>top-k</strong> + <strong>error feedback</strong> para deltas.</li>
-            <li>Late join, rejoin, salida ordenada, expulsión automática.</li>
-            <li>Retención de checkpoints y object store local/S3.</li>
-            <li>Churn completo: recuperación en ≤ 2 rondas (test integrado).</li>
-            <li>Emulación WAN: delay, jitter, pérdida y ancho de banda.</li>
+            <li><strong>Estado:</strong> Range/ETag, manifest por chunks, Merkle/hash, cache persistente por contenido.</li>
+            <li><strong>Churn:</strong> reintentos, re-registro, recuperación ante cortes/reinicios (objetivo ≤ 2 rondas).</li>
+            <li><strong>Compresión:</strong> int8, top-k + error feedback (negociación zstd en progreso).</li>
+            <li><strong>Identidad:</strong> BSV/admisión/invites/firmas (MVP), túnel bitbeam v4 con evolución a pares dinámicos.</li>
+            <li><strong>Privacidad:</strong> página pública sanitizada; control/dashboard privados y autenticados.</li>
           </ul>
         </div>
       </div>
     </section>
 
-    <!-- ESTADO -->
     <section id="estado" class="section">
       <div class="section-head">
         <span class="eyebrow">Estado de implementación</span>
-        <h2>P0/P1 completos · P2.1/P2.2 completos · F1 en curso.</h2>
+        <h2>Base sólida + P1 visual/UX y P2 WAN en progreso.</h2>
       </div>
       <div class="status-grid">
         <div class="status-col">
-          <h3 class="status-title done">Implementado</h3>
+          <h3 class="status-title done">Implementado / operativo</h3>
           <ul class="status-list">
-            <li>Config validada con fingerprint de modelo/datos/entrenamiento.</li>
-            <li>Backend <code>toy</code> (CPU) y <code>hf</code> (PEFT/QLoRA).</li>
-            <li>Solo parámetros entrenables se serializan (base congelada).</li>
-            <li>Coordinador HTTP/gRPC con token, quórum, deadline, heartbeat.</li>
-            <li>Espera de <code>min_workers</code>, agregación Nesterov, checkpoints atómicos.</li>
-            <li>Reanudación, exportación previa del adaptador inicial.</li>
-            <li>int8, top-k, error feedback, late join, expulsión, retención.</li>
-            <li>TLS/mTLS, object store local/S3, WAN emulation, P2P Hyperswarm.</li>
-            <li>gRPC/mTLS real y churn completo (rejoin ≤ 2 rondas).</li>
-            <li>Carga thread-safe del modelo HF (2+ workers).</li>
+            <li>Coordinador/worker HTTP (+gRPC opcional), quorum, deadlines, heartbeats, late join/rejoin.</li>
+            <li>Backend toy/HF (PEFT/QLoRA), base congelada, serialización de adaptadores, checkpoints atómicos.</li>
+            <li>Compresión int8 y top-k + error feedback.</li>
+            <li>Estado blob con Range/chunks/manifest/hash/Merkle, resume, verificación y cache (memoria + persistente).</li>
+            <li>Métricas de ronda/sync/bytes expuestas y visibles en web pública, dashboard y network.</li>
+            <li>Identidad/admisión BSV MVP, invites, túnel bitbeam v4, mejoras de reconexión/reconciliación de peers.</li>
+            <li>Estado público sanitizado en <code>/v1/public/status</code> (y <code>/api/status</code> en deploy) y dashboard/agente protegidos.</li>
           </ul>
         </div>
         <div class="status-col">
-          <h3 class="status-title pending">Pendiente</h3>
+          <h3 class="status-title pending">En progreso / pendiente</h3>
           <ul class="status-list">
-            <li>Barrido int8+error feedback a H=100 (3 semillas).</li>
-            <li>Pruebas WAN con <code>tc netem</code> y medición CU/sync.</li>
-            <li>Piloto 32B QLoRA en GPU suficiente.</li>
-            <li>Piloto 70B QLoRA.</li>
-            <li>Full fine-tuning 7B/13B (FSDP2).</li>
-            <li>8–20 nodos y modelos 100B+ (investigación).</li>
+            <li>Paridad gRPC chunked/manifest para artefactos grandes y checkpoints.</li>
+            <li>Compresión negociada/efectiva en wire (zstd) y métricas bytes-on-wire completas.</li>
+            <li>Validación E2E WAN/NAT multi-máquina, `tc netem`, stragglers y suite de resiliencia.</li>
+            <li>Protocolo firmado end-to-end, rotación/revocación de claves, hardening authz/auditoría.</li>
+            <li>Benchmarks reproducibles 32B/70B, observabilidad avanzada y UX one-command completa.</li>
           </ul>
         </div>
       </div>
       <div class="badge-row">
-        <span class="chip">39 tests OK</span>
+        <span class="chip">44 tests OK</span>
         <span class="chip">Python 3.11–3.13</span>
         <span class="chip">PyTorch 2.8+</span>
-        <span class="chip">Transformers 5.x</span>
-        <span class="chip">PEFT 0.17+</span>
-        <span class="chip">RTX 3080 8 GB validado</span>
+        <span class="chip">bitbeam v4</span>
+        <span class="chip">BSV identity MVP</span>
+        <span class="chip">public status live</span>
       </div>
     </section>
 
-    <!-- RESULTADOS -->
     <section id="resultados" class="section">
       <div class="section-head">
-        <span class="eyebrow">Resultados</span>
-        <h2>F1 real: Qwen2.5-0.5B, 2 workers, 5 rondas, holdout Zig.</h2>
+        <span class="eyebrow">Resultados y validación</span>
+        <h2>Validaciones funcionales y mediciones de sincronización.</h2>
       </div>
-      <div class="table-wrap">
-        <table class="results">
-          <thead>
-            <tr>
-              <th>Configuración</th>
-              <th>H=10</th>
-              <th>H=20</th>
-              <th>H=50</th>
-              <th>H=100</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>DiLoCo float</td>
-              <td>+5.26%</td>
-              <td>—</td>
-              <td>—</td>
-              <td>—</td>
-            </tr>
-            <tr>
-              <td>int8</td>
-              <td>+5.29%</td>
-              <td>+1.23%</td>
-              <td>-0.97%</td>
-              <td>-1.47%</td>
-            </tr>
-            <tr>
-              <td>int8 + top-k 10%</td>
-              <td>+7.72%</td>
-              <td>+6.46%</td>
-              <td>+4.45%</td>
-              <td>+3.14%</td>
-            </tr>
-            <tr>
-              <td>int8 + error feedback</td>
-              <td>+7.44%</td>
-              <td>+6.02%</td>
-              <td>+3.62%</td>
-              <td>—</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="table-caption">
-        loss gap = (DiLoCo − baseline) / baseline. Negativo = DiLoCo mejor.
-        Payload Qwen2.5-0.5B: 2.16 MB → 0.54 MB (4×) con int8; mensaje HTTP 0.567 MB (3.8×).
-        Toy: DiLoCo 0.003723 vs baseline 0.008095 (loss_gap = -54%).
-      </p>
       <div class="grid-2">
         <div class="card">
-          <h3>Modelos validados</h3>
+          <h3>Resultados (referencia F1 previa)</h3>
+          <p class="table-caption" style="margin-top:0">Qwen2.5-0.5B, 2 workers, 5 rondas (holdout Zig). <code>loss gap = (DiLoCo − baseline) / baseline</code> (negativo = mejor).</p>
+          <div class="table-wrap">
+            <table class="results">
+              <thead><tr><th>Config</th><th>H=10</th><th>H=50</th><th>H=100</th></tr></thead>
+              <tbody>
+                <tr><td>int8</td><td>+5.29%</td><td>-0.97%</td><td>-1.47%</td></tr>
+                <tr><td>int8 + top-k 10%</td><td>+7.72%</td><td>+4.45%</td><td>+3.14%</td></tr>
+                <tr><td>int8 + EF</td><td>+7.44%</td><td>+3.62%</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="table-caption">Payload 0.5B: 2.16 MB → 0.54 MB (4×) con int8. Toy: DiLoCo mejora loss frente a baseline en smoke determinista.</p>
+        </div>
+        <div class="card">
+          <h3>Qué se valida hoy</h3>
           <ul class="bullets">
-            <li>Qwen2.5-0.5B (CPU/GPU) — validación funcional.</li>
-            <li>Qwen3-4B-Thinking-2507 (GPU 8 GB, QLoRA NF4) — smoke OK.</li>
-            <li>Toy determinista — 39 tests.</li>
+            <li>Suite automatizada: <strong>44 tests OK</strong> (smoke, reanudación, churn/rejoin, cache/resume de estado, métricas, transporte).</li>
+            <li>Estado público con métricas agregadas y tendencias sanitizadas.</li>
+            <li>Dashboard/launcher con conexión coordinador/agente, procesos, logs y export de datos.</li>
+            <li>Recetas HF/QLoRA probadas en modelos pequeños/medianos; escalado 32B/70B en roadmap con perfiles reproducibles.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="despliegue" class="section">
+      <div class="section-head">
+        <span class="eyebrow">Despliegue</span>
+        <h2>Público y privado, separados por diseño.</h2>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Público (solo lectura)</h3>
+          <ul class="bullets">
+            <li>Sirve <code>web/public/</code> y proxyea <code>/api/status</code> → <code>/v1/public/status</code> (sanitizado).</li>
+            <li>Sin IDs de nodos, claves, logs ni endpoints de control.</li>
+            <li>Resiliente: la página puede mostrar estado "sin datos" si el coordinador no está disponible.</li>
           </ul>
         </div>
         <div class="card">
-          <h3>Próximos modelos</h3>
+          <h3>Privado (control)</h3>
           <ul class="bullets">
-            <li>0.8B / 1.7B / 4B / 9B para iterar en hardware modesto.</li>
-            <li>32B QLoRA (GPU 24–48 GB por isla).</li>
-            <li>70B QLoRA (GPU 48–80 GB por isla).</li>
+            <li>Dashboard/agente (<code>web/dashboard.*</code>, <code>scripts/agent.py</code>) y coordinador deben ir autenticados y no expuestos públicamente.</li>
+            <li>Agente con <code>AGENT_TOKEN</code> (HTTP Basic/password o header/token según cliente); añade capas nginx/VPN/allowlist.</li>
+            <li>Deploy automatizado: <code>deploy/deploy_vps.sh</code>, compose en <code>proxy-net</code>, vhosts en <code>deploy/nginx/</code>.</li>
           </ul>
+          <p class="table-caption">Guía: <a href="https://github.com/" onclick="return false;">docs/DEPLOY_PUBLIC_DASHBOARD.md</a> (ver repositorio) · estado público: <a href="https://didiloco.bsv.direct/" target="_blank" rel="noopener">didiloco.bsv.direct</a></p>
         </div>
       </div>
     </section>
 
-    <!-- ROADMAP -->
-    <section id="roadmap" class="section">
-      <div class="section-head">
-        <span class="eyebrow">Roadmap</span>
-        <h2>De localhost a piloto 70B.</h2>
-      </div>
-      <div class="timeline">
-        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P0</strong> Especificación, config, esqueleto. <em>Hecho.</em></div></div>
-        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P1</strong> Backend toy/HF, coordinador, 2 islas, checkpoints, reanudación. <em>Hecho.</em></div></div>
-        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P2.1</strong> int8, top-k, error feedback, thread-safe HF. <em>Hecho.</em></div></div>
-        <div class="tl-item done"><span class="tl-dot"></span><div><strong>P2.2</strong> Robustez: rejoin, late join, evicción, TLS, object store, WAN, P2P, gRPC/mTLS, churn. <em>Hecho.</em></div></div>
-        <div class="tl-item active"><span class="tl-dot"></span><div><strong>P3</strong> 4 islas WAN emulada, baseline centralizado, CU/sync. <em>En curso.</em></div></div>
-        <div class="tl-item"><span class="tl-dot"></span><div><strong>P4</strong> Piloto 32B QLoRA. <em>Pendiente.</em></div></div>
-        <div class="tl-item"><span class="tl-dot"></span><div><strong>P5</strong> Piloto 70B QLoRA. <em>Pendiente.</em></div></div>
-        <div class="tl-item"><span class="tl-dot"></span><div><strong>P6</strong> Endurecimiento: seguridad, stragglers, churn en producción. <em>Pendiente.</em></div></div>
-      </div>
-    </section>
-
-    <!-- INICIO RAPIDO -->
     <section id="inicio" class="section">
       <div class="section-head">
         <span class="eyebrow">Inicio rápido</span>
-        <h2>De cero a una ronda en 4 comandos.</h2>
+        <h2>Prueba local, luego despliega público/privado.</h2>
       </div>
       <div class="code-block">
         <pre><code># Tests
 .venv/bin/python -m unittest discover -s tests -q
 
-# Smoke 2 islas (toy, 4 rondas)
+# Smoke 2 workers (toy, CPU)
 .venv/bin/python scripts/smoke_local.py --reset --rounds 4 --workers 2 --device cpu
 
-# HF 4B (QLoRA, 1 ronda)
-.venv/bin/python scripts/smoke_local.py \
-  --config configs/qwen3-4b-single.json --workers 1 --rounds 1 --device cuda
+# Coordinador + worker (modo multi-proceso)
+./coordinator --config configs/smoke.json --device cpu --reset --max-rounds 4 --no-wait
+./worker --config configs/smoke.json --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:8095 --device cpu
 
-# Modo multi-proceso
-.venv/bin/python scripts/run_coordinator.py --config configs/smoke.json --device cpu --reset --max-rounds 4
-.venv/bin/python scripts/run_worker.py --config configs/smoke.json --node-id node-0 --shard-id 0 --coordinator http://127.0.0.1:PORT</code></pre>
+# Console/agente local
+./agent --open
+
+# Deploy VPS (ejemplo, sin instalar/reload nginx desde script)
+NGINX_CONF_FILES="" NGINX_CONTAINER="" ./deploy/deploy_vps.sh</code></pre>
       </div>
     </section>
 
     <footer class="footer">
       <p>DiLoCo WAN · entrenamiento distribuido de LLMs sobre internet · Python + PyTorch + PEFT + bitbeam + BSV</p>
-      <p class="footer-small">P0–P2 base completos · identidad BSV MVP · túnel bitbeam v4 · dashboard protegido · estado público en <code>/api/status</code></p>
+      <p class="footer-small">44 tests OK · estado público sanitizado · dashboard/agente protegidos · deploy docker/nginx (proxy-net)</p>
     </footer>
   </main>
 
