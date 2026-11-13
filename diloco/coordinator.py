@@ -548,6 +548,15 @@ class Coordinator:
             "registered": sorted(self.registered),
         }
 
+    def _round_wait_seconds_locked(self) -> float:
+        if self.round_started_at is None:
+            return 0.0
+        return max(0.0, time.time() - float(self.round_started_at))
+
+    def _waiting_nodes_locked(self) -> List[str]:
+        # Nodes registered for this run but without an update submitted in the current round.
+        return sorted(set(self.registered) - set(self.updates))
+
     def register(
         self,
         node_id: str,
@@ -728,9 +737,14 @@ class Coordinator:
                 ):
                     remaining = deadline - time.time()
                     if remaining <= 0:
+                        waiting = self._waiting_nodes_locked()
+                        waiting_info = f"; waiting={','.join(waiting[:12])}" if waiting else ""
+                        if waiting and len(waiting) > 12:
+                            waiting_info += f",+{len(waiting)-12}"
                         self.failure = (
                             f"round {self.round_index} timed out with "
                             f"{len(self.updates)}/{self.config.coordinator.quorum} updates"
+                            f"{waiting_info}"
                         )
                         self.finished = True
                         self.cond.notify_all()
@@ -883,12 +897,15 @@ class Coordinator:
     # ----------------------------------------------------------------- status
     def health(self) -> Dict[str, Any]:
         with self.cond:
+            waiting_nodes = self._waiting_nodes_locked()
             return {
                 "ok": self.failure is None,
                 "finished": bool(self.finished),
                 "round": int(self.round_index),
                 "max_rounds": int(self.config.coordinator.max_rounds),
                 "registered": len(self.registered),
+                "pending_updates": len(self.updates),
+                "waiting_workers": len(waiting_nodes),
                 "failure": self.failure,
             }
 
@@ -923,6 +940,8 @@ class Coordinator:
                     "state_blob_bytes": int(item["state_blob_bytes"]) if item.get("state_blob_bytes") is not None else None,
                     "nodes_count": len(item.get("nodes") or []),
                 })
+            waiting_workers = max(0, len(self.registered) - len(self.updates))
+            round_wait_seconds = self._round_wait_seconds_locked() if (not self.finished and len(self.updates) > 0 and len(self.updates) < int(self.config.coordinator.quorum)) else 0.0
             return {
                 "ok": self.failure is None,
                 "run_id": self.config.run_id,
@@ -933,8 +952,10 @@ class Coordinator:
                 "has_failure": self.failure is not None,
                 "workers_active": len(self.registered),
                 "pending_updates": len(self.updates),
+                "waiting_workers": int(waiting_workers),
                 "quorum": int(self.config.coordinator.quorum),
                 "min_workers": int(self.config.coordinator.min_workers),
+                "round_wait_seconds": float(round_wait_seconds),
                 "last_round": last_round,
                 "history": pub_history,
                 "updated_at": time.time(),
@@ -942,6 +963,7 @@ class Coordinator:
 
     def status(self) -> Dict[str, Any]:
         with self.cond:
+            waiting_nodes = self._waiting_nodes_locked()
             return {
                 "run_id": self.config.run_id,
                 "round": int(self.round_index),
@@ -951,7 +973,14 @@ class Coordinator:
                 "failure": self.failure,
                 "registered": sorted(self.registered),
                 "pending_updates": sorted(self.updates),
+                "waiting_nodes": waiting_nodes,
+                "waiting_workers": len(waiting_nodes),
                 "quorum": int(self.config.coordinator.quorum),
+                "min_workers": int(self.config.coordinator.min_workers),
+                "round_wait_seconds": float(self._round_wait_seconds_locked() if (not self.finished and self.round_started_at is not None and len(self.updates) < int(self.config.coordinator.quorum)) else 0.0),
+                "round_timeout_s": float(self.config.coordinator.round_timeout_s),
+                "idle_timeout_s": float(self.config.coordinator.idle_timeout_s),
+                "registration_open": bool(self.registration_open),
                 "last_result": self.last_result,
                 "history": list(self.history),
                 "state_hash": self._state_hash,

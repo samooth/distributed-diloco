@@ -299,7 +299,7 @@
             </svg>
           </div>
           <div class="viz-stats">
-            <div class="mini"><div class="k">Updates pendientes</div><div class="v" id="pending">—</div></div>
+            <div class="mini"><div class="k">Updates recibidos / esperando</div><div class="v" id="pending">—</div></div>
             <div class="mini"><div class="k">Nodos (últ. ronda)</div><div class="v" id="lastNodes">—</div></div>
           </div>
         </div>
@@ -515,10 +515,13 @@
       $('round').textContent = fmtInt(round);
       $('maxRounds').textContent = max > 0 ? fmtInt(max) : '∞';
       $('roundSub').textContent = data.finished ? 'run finalizado' : (workers > 0 ? 'progreso activo' : 'esperando workers');
+      const waiting = (data.waiting_workers != null) ? Number(data.waiting_workers) : Math.max(0, workers - Number(data.pending_updates || 0));
+      const received = Number(data.pending_updates || 0);
       $('workersMeta').textContent = fmtInt(workers);
       $('quorumMeta').textContent = fmtInt(data.quorum) + ' / ' + fmtInt(data.min_workers);
       $('gstepMeta').textContent = fmtInt(data.global_step);
-      $('pending').textContent = fmtInt(data.pending_updates);
+      $('pending').textContent = fmtInt(received) + ' / ' + fmtInt(waiting);
+      $('roundSub').textContent = data.finished ? 'run finalizado' : (workers > 0 ? (Number(data.round_wait_seconds || 0) > 0 ? `esperando quorum · ${fmt(data.round_wait_seconds, 1)}s` : 'progreso activo') : 'esperando workers');
 
       $('bar').style.width = pct.toFixed(1) + '%';
       $('progressLabel').textContent = max > 0 ? `Ronda ${fmtInt(round)} / ${fmtInt(max)}` : `Ronda ${fmtInt(round)}`;

@@ -77,16 +77,21 @@ async function refreshCoord() {
     const [health, status] = await Promise.all([fetchJson("/v1/health"), fetchJson("/v1/status")]);
     setPill(health.failure ? "Error" : "Conectado", health.failure ? "pill-err" : "pill-ok");
 
-    $("k-nodes").textContent = (status.registered || []).length;
+    const registered = status.registered || [];
+    const pendingList = status.pending_updates || [];
+    const waitingCount = Number(status.waiting_workers != null ? status.waiting_workers : Math.max(0, registered.length - pendingList.length));
+    const waitSec = Number(status.round_wait_seconds || 0);
+    $("k-nodes").textContent = registered.length;
     $("k-round").textContent = `${status.round}/${status.max_rounds}`;
-    $("k-pending").textContent = (status.pending_updates || []).length;
+    $("k-pending").textContent = `${pendingList.length} / ${waitingCount}`;
+    $("k-pending-sub").textContent = waitSec > 0 ? `recibidos / esperando · ${waitSec.toFixed(1)}s` : "recibidos / esperando";
     $("k-quorum").textContent = status.quorum;
     const lr = status.last_result || null;
     $("k-sync").textContent = lr && isFinite(Number(lr.sync_seconds)) ? Number(lr.sync_seconds).toFixed(2) : "—";
     $("k-sync-sub").textContent = lr ? `ronda ${lr.round}` : "sin datos";
     $("k-state").textContent = status.finished ? "finalizado" : (health.failure ? "error" : "en curso");
-    $("k-state-sub").textContent = status.failure ? "fallo reportado" : (status.finished ? "run completo" : "run activo/espera");
-    $("k-nodes-sub").textContent = `quórum ${status.quorum}`;
+    $("k-state-sub").textContent = status.failure ? "fallo reportado" : (status.finished ? "run completo" : (waitSec > 0 ? `esperando quorum · ${waitSec.toFixed(1)}s` : "run activo/espera"));
+    $("k-nodes-sub").textContent = `quórum ${status.quorum} · esperando ${waitingCount}`;
 
     const short = (s, n = 10) => (s ? String(s).slice(0, n) : "");
     const meta = [`${(status.registered || []).length} nodos`, `ronda ${status.round}`];
@@ -97,31 +102,39 @@ async function refreshCoord() {
     $("topo-meta").textContent = meta.join(" · ");
 
     const coord = $("topo-coord");
-    coord.innerHTML = `<span class="node-name">Coordinador</span><span class="node-meta">ronda ${status.round}/${status.max_rounds} · ${status.finished ? "finalizado" : "activo"} · pendientes ${(status.pending_updates || []).length}</span>`;
+    coord.innerHTML = `<span class="node-name">Coordinador</span><span class="node-meta">ronda ${status.round}/${status.max_rounds} · ${status.finished ? "finalizado" : "activo"} · recibidos ${(status.pending_updates || []).length} · esperando ${waitingCount}</span>`;
     const nodesEl = $("topo-nodes");
     nodesEl.innerHTML = "";
-    if (!status.registered || status.registered.length === 0) {
+    const waitingSet = new Set(status.waiting_nodes || []);
+    const pendingSet = new Set(pendingList);
+    if (!registered.length) {
       const empty = document.createElement("div");
       empty.className = "topo-empty";
       empty.textContent = "Sin nodos registrados";
       nodesEl.appendChild(empty);
     } else {
-      status.registered.forEach((n, i) => {
+      registered.forEach((n, i) => {
         const div = document.createElement("div");
-        div.className = "topo-node active";
-        div.innerHTML = `<span class="node-name">${escapeHtml(n)}</span><span class="node-meta">worker #${i}</span>`;
+        const waiting = waitingSet.has(n);
+        const got = pendingSet.has(n);
+        div.className = "topo-node " + (waiting ? "waiting" : "active");
+        const meta = got ? "update recibido" : (waiting ? "esperando update" : "activo");
+        div.innerHTML = `<span class="node-name">${escapeHtml(n)}</span><span class="node-meta">${meta} · #${i}</span>`;
         nodesEl.appendChild(div);
       });
     }
 
     const nt = document.querySelector("#nodes-table tbody");
     nt.innerHTML = "";
-    if (!status.registered || status.registered.length === 0) {
+    if (!registered.length) {
       nt.innerHTML = `<tr><td colspan="3" class="empty">Sin nodos registrados</td></tr>`;
     } else {
-      status.registered.forEach((n, i) => {
+      registered.forEach((n, i) => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td class="mono">${escapeHtml(n)}</td><td><span class="pill pill-ok">activo</span></td><td>${i}</td>`;
+        const got = pendingSet.has(n);
+        const waiting = waitingSet.has(n);
+        const st = got ? '<span class="pill pill-ok">recibido</span>' : (waiting ? '<span class="pill pill-warn">esperando</span>' : '<span class="pill pill-ok">activo</span>');
+        tr.innerHTML = `<td class="mono">${escapeHtml(n)}</td><td>${st}</td><td>${i}</td>`;
         nt.appendChild(tr);
       });
     }
