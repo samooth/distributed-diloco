@@ -391,6 +391,8 @@
           <tr><td>Train loss</td><td class="mono" id="lrLoss2">—</td></tr>
           <tr><td>Sync (s)</td><td class="mono" id="lrSync">—</td></tr>
           <tr><td>Global step</td><td class="mono" id="lrStep">—</td></tr>
+          <tr><td>Upload total</td><td class="mono" id="lrUpBytes">—</td></tr>
+          <tr><td>State blob</td><td class="mono" id="lrStateBytes">—</td></tr>
         </table>
       </div>
       <div class="card about">
@@ -434,6 +436,15 @@
       return n.toPrecision(3);
     };
     const fmtInt = (v) => (v == null || !isFinite(v)) ? '—' : String(Math.trunc(Number(v)));
+    const fmtBytes = (v) => {
+      if (v == null || !isFinite(v)) return '—';
+      const n = Number(v);
+      if (n < 1024) return Math.round(n) + ' B';
+      const units = ['KB', 'MB', 'GB', 'TB'];
+      let x = n / 1024, i = 0;
+      while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+      return (x >= 10 ? x.toFixed(1) : x.toFixed(2)) + ' ' + units[i];
+    };
 
     function setStatus(kind, text) {
       const dot = $('dot');
@@ -513,6 +524,8 @@
       $('lrLoss2').textContent = lr ? fmtSmart(lr.train_loss) : '—';
       $('lrSync').textContent = lr ? fmt(lr.sync_seconds, 3) : '—';
       $('lrStep').textContent = lr ? fmtInt(lr.global_step) : '—';
+      $('lrUpBytes').textContent = lr ? fmtBytes(lr.update_bytes_total) : '—';
+      $('lrStateBytes').textContent = lr ? fmtBytes(lr.state_blob_bytes) : '—';
 
       setViz(workers, 6);
 

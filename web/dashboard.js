@@ -29,6 +29,15 @@ $("theme-toggle").addEventListener("click", () => {
 });
 applyTheme(localStorage.getItem("diloco-theme") || "light");
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtBytes = (v) => {
+  if (v == null || !isFinite(Number(v))) return "—";
+  const n = Number(v);
+  if (n < 1024) return Math.round(n) + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let x = n / 1024, i = 0;
+  while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+  return (x >= 10 ? x.toFixed(1) : x.toFixed(2)) + " " + units[i];
+};
 
 let timer = null;
 let connected = false;
@@ -208,7 +217,7 @@ async function refresh() {
     const hist = status.history || [];
     if (hist.length === 0) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="5" class="empty">Sin rondas registradas</td>`;
+      tr.innerHTML = `<td colspan="7" class="empty">Sin rondas registradas</td>`;
       rt.appendChild(tr);
     } else {
       hist.slice().reverse().forEach((r) => {
@@ -218,7 +227,9 @@ async function refresh() {
           <td>${(r.nodes || []).length}</td>
           <td class="mono">${Number(r.train_loss).toFixed(4)}</td>
           <td class="mono">${Number(r.delta_norm).toFixed(4)}</td>
-          <td class="mono">${Number(r.sync_seconds).toFixed(2)}</td>`;
+          <td class="mono">${Number(r.sync_seconds).toFixed(2)}</td>
+          <td class="mono">${fmtBytes(r.update_bytes_total)}</td>
+          <td class="mono">${fmtBytes(r.state_blob_bytes)}</td>`;
         rt.appendChild(tr);
       });
     }

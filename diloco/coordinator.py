@@ -904,6 +904,8 @@ class Coordinator:
                     "train_loss": float(last["train_loss"]) if last.get("train_loss") is not None else None,
                     "delta_norm": float(last["delta_norm"]) if last.get("delta_norm") is not None else None,
                     "sync_seconds": float(last["sync_seconds"]) if last.get("sync_seconds") is not None else None,
+                    "update_bytes_total": int(last["update_bytes_total"]) if last.get("update_bytes_total") is not None else None,
+                    "state_blob_bytes": int(last["state_blob_bytes"]) if last.get("state_blob_bytes") is not None else None,
                     "nodes_count": len(last.get("nodes") or []),
                     "done": bool(last.get("done", False)),
                 }
