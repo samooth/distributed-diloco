@@ -73,6 +73,7 @@ class Worker:
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._residual: Optional[Dict[str, torch.Tensor]] = None
+        self._last_state_fetch: Dict[str, Any] = {"source": "none", "bytes": 0, "seconds": 0.0}
 
     @staticmethod
     def _load_identity(path: Optional[Path]) -> Optional[Dict[str, Any]]:
@@ -664,9 +665,11 @@ class Worker:
             return False
 
     def get_state(self, download: bool = False) -> tuple[Dict[str, Any], Dict[str, torch.Tensor]]:
+        fetch_t0 = time.time()
         if not download:
             local = self._load_local_init_state()
             if local is not None:
+                self._last_state_fetch = {"source": "local_init", "bytes": 0, "seconds": round(time.time() - fetch_t0, 6)}
                 return local
 
         client = self._get_grpc_client()
@@ -678,6 +681,7 @@ class Worker:
                     expected_meta = client.get_state_meta(self.node_id)
                     if self._current_state_matches_meta(expected_meta):
                         state = self.backend.state()
+                        self._last_state_fetch = {"source": "memory", "bytes": 0, "seconds": round(time.time() - fetch_t0, 6)}
                         return dict(expected_meta), clone_state(state)
                 except Exception:  # noqa: BLE001
                     expected_meta = None
@@ -686,6 +690,7 @@ class Worker:
                 if cached is not None:
                     meta, state = unpack_message(cached)
                     self._validate_state(meta, state)
+                    self._last_state_fetch = {"source": "cache", "bytes": len(cached), "seconds": round(time.time() - fetch_t0, 6)}
                     return meta, clone_state(state)
             raw = client.get_state(self.node_id)
             meta, state = unpack_message(raw)
@@ -693,6 +698,7 @@ class Worker:
             state_hash = str(meta.get("state_hash", "") or "")
             if state_hash:
                 self._save_cached_state_blob(state_hash, raw, str(meta.get("state_blob_hash", "") or hash_blob(raw)), meta.get("round"))
+            self._last_state_fetch = {"source": "grpc", "bytes": len(raw), "seconds": round(time.time() - fetch_t0, 6)}
             return meta, clone_state(state)
 
         # HTTP: try resumable/chunked download when blob metadata is available
@@ -710,6 +716,7 @@ class Worker:
                 expected_meta.get("round"),
                 expected_meta.get("state_hash"),
             )
+            self._last_state_fetch = {"source": "memory", "bytes": 0, "seconds": round(time.time() - fetch_t0, 6)}
             return dict(expected_meta), clone_state(self.backend.state())
 
         # Persistent cache: reuse downloaded blob for this state_hash if available
@@ -718,6 +725,7 @@ class Worker:
             if cached is not None:
                 meta, state = unpack_message(cached)
                 self._validate_state(meta, state)
+                self._last_state_fetch = {"source": "cache", "bytes": len(cached), "seconds": round(time.time() - fetch_t0, 6)}
                 return meta, clone_state(state)
 
         raw = self._download_state_blob_http(expected_meta)
@@ -727,6 +735,7 @@ class Worker:
         if state_hash:
             blob_hash = str((expected_meta or {}).get("state_blob_hash", "") or "") or hash_blob(raw)
             self._save_cached_state_blob(state_hash, raw, blob_hash, meta.get("round"))
+        self._last_state_fetch = {"source": "http", "bytes": len(raw), "seconds": round(time.time() - fetch_t0, 6)}
         return meta, clone_state(state)
 
     def _validate_state(
@@ -879,6 +888,7 @@ class Worker:
                     payload_meta["sig_alg"] = sig.get("alg", "")
                 except Exception as exc:  # noqa: BLE001
                     LOG.warning("%s could not sign update: %s", self.node_id, exc)
+            submit_t0 = time.time()
             client = self._get_grpc_client()
             if client is not None:
                 blob = pack_message(payload_meta, upload_state)
@@ -1107,11 +1117,15 @@ class Worker:
                     continue
                 if not submitted_ok:
                     raise CoordinatorError(0, f"submit failed after {max_submit_attempts} attempts")
+            submit_seconds = round(max(0.0, time.time() - submit_t0), 6)
+            state_response_bytes = len(raw)
             new_meta, new_state = unpack_message(raw)
             self._validate_state(new_meta, new_state)
             rounds_done += 1
             stale_retries = 0
             last_metrics = dict(new_meta)
+            total_round_seconds = round(float(train_seconds) + float(submit_seconds), 6)
+            sync_fraction = round(float(submit_seconds) / total_round_seconds, 6) if total_round_seconds > 0 else 0.0
             record = {
                 "node_id": self.node_id,
                 "round": round_id,
@@ -1127,7 +1141,10 @@ class Worker:
                     sum(v.numel() * v.element_size() for v in delta.values())
                 ),
                 "upload_bytes": len(blob),
+                "state_response_bytes": state_response_bytes,
                 "train_seconds": train_seconds,
+                "submit_seconds": submit_seconds,
+                "sync_fraction": sync_fraction,
                 "state_hash": str(new_meta.get("state_hash", "")),
                 "done": bool(new_meta.get("done", False)),
             }

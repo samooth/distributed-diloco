@@ -268,7 +268,14 @@ async function tunnelServer() {
     const id = loadIdentityFile(identityFile)
     if (!id.wif) throw new Error('identity file must include wif for tunnel server')
     const peerFiles = args('--peer-pubkey-file')
-    let peers = collectPeerPubkeys()
+    const staticPeers = new Set(args('--peer-pubkey').map(s => String(s || '').trim()).filter(Boolean))
+    function effectivePeers () {
+      const out = new Set(staticPeers)
+      for (const p of readPeersFromFiles(peerFiles)) out.add(String(p || '').trim())
+      for (const p of out) { if (!p) out.delete(p) }
+      return out
+    }
+    let peers = [...effectivePeers()]
     if (!peers.length && peerFiles.length === 0) {
       throw new Error('identity tunnel-server requires --peer-pubkey or --peer-pubkey-file')
     }
@@ -310,6 +317,16 @@ async function tunnelServer() {
       }
     }
 
+    async function removePeerListener(peerPub) {
+      const p = String(peerPub || '').trim()
+      const entry = listeners.get(p)
+      if (!entry) return false
+      listeners.delete(p)
+      try { await entry.server.close() } catch (e) { try { entry.server.destroy?.() } catch {} }
+      console.log(JSON.stringify({ event: 'peer-listener-removed', mode: 'tunnel-server-id', peer: p, reason: 'revoked-or-removed' }))
+      return true
+    }
+
     for (const peerPub of peers) {
       await addPeerListener(peerPub)
     }
@@ -320,7 +337,7 @@ async function tunnelServer() {
       // poll until at least one peer appears
       while (listeners.size === 0) {
         await new Promise((r) => setTimeout(r, 2000))
-        const dynamic = readPeersFromFiles(peerFiles)
+        const dynamic = [...effectivePeers()]
         for (const p of dynamic) await addPeerListener(p)
       }
     } else if (listeners.size === 0) {
@@ -329,22 +346,29 @@ async function tunnelServer() {
 
     console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server-id', topic, context, transport: 'bitbeam-identity', target: `${targetHost}:${targetPort}`, peers: listeners.size, coordinator_pubkey: id.pubkey }))
 
-    // Dynamic late-join: re-read peer pubkey files and add listeners for new peers
+    // Dynamic late-join and revocation: re-read peer pubkey files and reconcile listeners
     if (peerFiles.length > 0) {
       (async () => {
         while (true) {
           await new Promise((r) => setTimeout(r, 5000))
           try {
-            const dynamic = readPeersFromFiles(peerFiles)
+            const want = effectivePeers()
             let added = 0
-            for (const p of dynamic) {
-              if (!listeners.has(String(p || '').trim())) {
+            let removed = 0
+            for (const p of want) {
+              if (!listeners.has(p)) {
                 const ok = await addPeerListener(p)
                 if (ok) added++
               }
             }
-            if (added > 0) {
-              console.log(JSON.stringify({ event: 'peers-updated', mode: 'tunnel-server-id', peers: listeners.size, added }))
+            for (const p of [...listeners.keys()]) {
+              if (!want.has(p)) {
+                const ok = await removePeerListener(p)
+                if (ok) removed++
+              }
+            }
+            if (added > 0 || removed > 0) {
+              console.log(JSON.stringify({ event: 'peers-updated', mode: 'tunnel-server-id', peers: listeners.size, added, removed }))
             }
           } catch (e) {
             console.error('tunnel-server-id peer refresh error', e && e.message ? e.message : e)

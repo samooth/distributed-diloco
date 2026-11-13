@@ -950,6 +950,141 @@ class LocalhostSmokeTests(unittest.TestCase):
                 coord.stop()
 
 
+    def test_worker_resumable_state_download_restarts_on_mid_download_state_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-state-midchange",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4, seed=13),
+                data=DataConfig(num_shards=1, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=1, max_workers=1, quorum=1, max_rounds=2,
+                    checkpoint_dir=tmp, token="", idle_timeout_s=0,
+                ),
+            )
+            state_a, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+            coord = Coordinator(config, state_a, base_hash)
+            port = coord.start()
+            backend = build_backend(config, shard_id=0, device="cpu")
+            worker = Worker(
+                config,
+                "node-midchange",
+                f"http://127.0.0.1:{port}",
+                backend,
+                log_path=str(Path(tmp) / "worker-midchange.jsonl"),
+                state_cache_dir=str(Path(tmp) / "cache-midchange"),
+            )
+            try:
+                worker.register()
+                meta_a = worker.get_state_meta()
+                blob_a = worker._download_state_blob_http(meta_a)
+                _, tensors_a = unpack_message(blob_a)
+
+                # Build a different but valid global state (same config/base) as "next" state
+                tensors_b = {k: v.detach().clone() + 0.5 for k, v in tensors_a.items()}
+                state_b_hash = hash_state(tensors_b)
+                meta_b = dict(meta_a)
+                meta_b["round"] = int(meta_a.get("round", 0)) + 1
+                meta_b["global_step"] = int(meta_a.get("global_step", 0)) + int(config.train.H)
+                meta_b["state_hash"] = state_b_hash
+                meta_b["done"] = False
+                # keep same config/base/adapter meta identity
+                blob_b = pack_message(meta_b, tensors_b)
+                meta_b["state_blob_hash"] = hashlib_sha256(blob_b)
+                meta_b["state_blob_bytes"] = len(blob_b)
+                meta_b["state_blob_chunk_size"] = int(meta_a.get("state_blob_chunk_size", 0) or 0)
+                meta_b["state_blob_chunk_hashes"] = list(meta_a.get("state_blob_chunk_hashes") or [])
+                meta_b["state_blob_merkle_root"] = str(meta_a.get("state_blob_merkle_root", "") or "")
+                meta_b["state_etag"] = f'"{meta_b["state_blob_hash"]}"'
+                # recompute manifest for blob_b to be consistent if chunking is used
+                chunk_size = int(meta_b.get("state_blob_chunk_size", 0) or 0)
+                if chunk_size > 0:
+                    meta_b["state_blob_chunk_hashes"] = [hashlib_sha256(blob_b[i:i+chunk_size]) for i in range(0, len(blob_b), chunk_size)]
+                    # simple merkle-like not required by current verifier except hashes list; keep root plausible
+                    meta_b["state_blob_merkle_root"] = hashlib_sha256(("".join(meta_b["state_blob_chunk_hashes"]).encode("utf-8")))
+
+                # Force download path
+                backend.load_state({k: v + 3.0 for k, v in backend.state().items()})
+                for p in Path(tmp, "cache-midchange").glob("*.blob"):
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+
+                calls = {"state": 0, "meta": 0}
+                current = {"meta": dict(meta_a), "blob": blob_a}
+
+                def headers_for(m):
+                    return {
+                        "ETag": str(m.get("state_etag", "")),
+                        "X-DiLoCo-Round": str(m.get("round", 0)),
+                        "X-DiLoCo-State-Hash": str(m.get("state_hash", "")),
+                        "X-DiLoCo-Blob-Hash": str(m.get("state_blob_hash", "")),
+                        "Accept-Ranges": "bytes",
+                    }
+
+                real_request = worker._request
+
+                def changing_request(method, path, body=None, content_type="application/json", timeout=None, extra_headers=None, allow_partial=False, retry_statuses=None):
+                    if method == "GET" and path.startswith("/v1/state_meta"):
+                        calls["meta"] += 1
+                        return 200, json.dumps(current["meta"]).encode("utf-8"), "application/json", {}
+                    if method == "GET" and path.startswith("/v1/state"):
+                        calls["state"] += 1
+                        rh = dict(extra_headers or {})
+                        range_header = rh.get("Range", "")
+                        m = dict(current["meta"])
+                        b = current["blob"]
+                        # Simulate coordinator advancing after first chunk response starts being processed:
+                        # return first range chunk with old identity, then switch to new state for subsequent requests
+                        if calls["state"] == 1 and range_header.startswith("bytes="):
+                            spec = range_header[len("bytes="):]
+                            start_s, end_s = spec.split("-", 1)
+                            start = int(start_s); end = int(end_s)
+                            end = min(end, len(b) - 1)
+                            chunk = b[start:end + 1]
+                            # deliver only a small prefix so worker will request next chunk and see change
+                            if len(chunk) > 4:
+                                chunk = chunk[:4]
+                            hdrs = headers_for(m)
+                            hdrs["Content-Range"] = f"bytes {start}-{start + len(chunk) - 1}/{len(b)}"
+                            # flip to new state after serving first partial chunk
+                            current["meta"] = dict(meta_b)
+                            current["blob"] = blob_b
+                            return 206, chunk, "application/octet-stream", hdrs
+                        # serve current (possibly new) state consistently
+                        if range_header.startswith("bytes="):
+                            spec = range_header[len("bytes="):]
+                            start_s, end_s = spec.split("-", 1)
+                            start = int(start_s); end = int(end_s)
+                        else:
+                            start, end = 0, len(b) - 1
+                        end = min(end, len(b) - 1)
+                        chunk = b[start:end + 1]
+                        hdrs = headers_for(m)
+                        hdrs["Content-Range"] = f"bytes {start}-{start + len(chunk) - 1}/{len(b)}"
+                        return 206 if range_header.startswith("bytes=") else 200, chunk, "application/octet-stream", hdrs
+                    return real_request(method, path, body=body, content_type=content_type, timeout=timeout, extra_headers=extra_headers, allow_partial=allow_partial, retry_statuses=retry_statuses)
+
+                worker._request = changing_request  # type: ignore[assignment]
+                worker.get_state_meta = lambda: dict(current["meta"])  # type: ignore[assignment]
+
+                blob_out = worker._download_state_blob_http(meta_a)
+                self.assertEqual(hashlib_sha256(blob_out), str(meta_b.get("state_blob_hash", "")))
+                out_meta, out_state = unpack_message(blob_out)
+                self.assertEqual(int(out_meta.get("round", -1)), int(meta_b["round"]))
+                self.assertEqual(str(out_meta.get("state_hash", "")), state_b_hash)
+                self.assertEqual(hash_state(out_state), state_b_hash)
+                self.assertGreaterEqual(calls["state"], 2)
+            finally:
+                try:
+                    worker.leave()
+                except Exception:
+                    pass
+                worker.close()
+                coord.stop()
+
+
 def hashlib_sha256(data: bytes) -> str:
     import hashlib
     return hashlib.sha256(data).hexdigest()
