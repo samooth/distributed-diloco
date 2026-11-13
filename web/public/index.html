@@ -57,7 +57,12 @@
       -webkit-font-smoothing: antialiased;
       text-rendering: optimizeLegibility;
     }
-    /* Animated background */
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+    .skip-link { position: absolute; left: -999px; top: 8px; background: var(--panel-strong); color: var(--text); padding: 8px 12px; border-radius: 8px; z-index: 20; border: 1px solid var(--border-strong); }
+    .skip-link:focus { left: 12px; }
+
     .bg {
       position: fixed; inset: 0; z-index: -2; overflow: hidden;
       background:
@@ -79,20 +84,14 @@
       animation: gridDrift 24s linear infinite;
     }
     @keyframes gridDrift { 0% { background-position: 0 0, 0 0; } 100% { background-position: 0 48px, 48px 0; } }
-    .orb {
-      position: absolute; border-radius: 999px; filter: blur(40px); opacity: .5;
-      animation: float 14s ease-in-out infinite;
-    }
+    .orb { position: absolute; border-radius: 999px; filter: blur(40px); opacity: .5; animation: float 14s ease-in-out infinite; }
     .orb.a { width: 420px; height: 420px; left: -120px; top: -80px; background: rgba(77,227,255,.16); }
     .orb.b { width: 360px; height: 360px; right: -80px; top: 10%; background: rgba(139,92,246,.18); animation-delay: -4s; }
     .orb.c { width: 320px; height: 320px; left: 35%; bottom: -120px; background: rgba(52,211,153,.10); animation-delay: -8s; }
     @keyframes float { 0%,100% { transform: translate3d(0,0,0) scale(1); } 50% { transform: translate3d(20px,-18px,0) scale(1.04); } }
 
     .wrap { max-width: 1180px; margin: 0 auto; padding: 26px 20px 64px; position: relative; }
-    header {
-      display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-      margin-bottom: 26px;
-    }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 26px; }
     .brand { display: flex; align-items: center; gap: 14px; }
     .mark {
       width: 44px; height: 44px; border-radius: 14px; position: relative;
@@ -100,143 +99,67 @@
       background: linear-gradient(135deg, var(--accent), var(--accent2));
       box-shadow: 0 12px 34px rgba(77,227,255,.22), inset 0 1px 0 rgba(255,255,255,.25);
     }
-    .mark::after {
-      content: ""; position: absolute; inset: -4px; border-radius: 16px;
-      background: linear-gradient(135deg, rgba(77,227,255,.35), rgba(139,92,246,.25));
-      filter: blur(10px); opacity: .5; z-index: -1;
-    }
+    .mark::after { content: ""; position: absolute; inset: -4px; border-radius: 16px; background: linear-gradient(135deg, rgba(77,227,255,.35), rgba(139,92,246,.25)); filter: blur(10px); opacity: .5; z-index: -1; }
     .brand h1 { margin: 0; font-size: 1.05rem; letter-spacing: .2px; font-weight: 700; }
     .brand p { margin: 2px 0 0; color: var(--muted); font-size: .86rem; }
     .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .pill {
-      font-size: .78rem; color: var(--muted); border: 1px solid var(--border);
-      padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,.03);
-      backdrop-filter: blur(8px);
-    }
-    .live {
-      display: inline-flex; align-items: center; gap: 8px; color: var(--text);
-      border-color: rgba(52,211,153,.25); background: rgba(52,211,153,.06);
-    }
-    .pulse {
-      width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
-      box-shadow: 0 0 0 0 rgba(52,211,153,.7); animation: pulse 1.8s infinite;
-    }
+    .pill { font-size: .78rem; color: var(--muted); border: 1px solid var(--border); padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,.03); backdrop-filter: blur(8px); }
+    .live { display: inline-flex; align-items: center; gap: 8px; color: var(--text); border-color: rgba(52,211,153,.25); background: rgba(52,211,153,.06); }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 rgba(52,211,153,.7); animation: pulse 1.8s infinite; }
     .pulse.warn { background: var(--warn); box-shadow: 0 0 0 0 rgba(251,191,36,.7); }
     .pulse.bad { background: var(--bad); box-shadow: 0 0 0 0 rgba(251,113,133,.7); }
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(52,211,153,.55); }
-      70% { box-shadow: 0 0 0 10px rgba(52,211,153,0); }
-      100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
-    }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.55);} 70% { box-shadow: 0 0 0 10px rgba(52,211,153,0);} 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0);} }
 
-    .hero {
-      display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; margin-bottom: 18px;
-    }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 22px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
-      position: relative;
-      overflow: hidden;
-    }
-    .card::before {
-      content: ""; position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 30%);
-    }
-    .eyebrow {
-      display: inline-flex; align-items: center; gap: 8px;
-      font-size: .78rem; color: var(--accent); font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
-      margin-bottom: 10px;
-    }
-    .eyebrow .tag {
-      font-size: .72rem; color: var(--muted); border: 1px solid var(--border);
-      padding: 3px 8px; border-radius: 999px; letter-spacing: 0; text-transform: none; font-weight: 500;
-      background: rgba(255,255,255,.02);
-    }
-    .hero h2 {
-      margin: 0 0 10px; font-size: clamp(1.7rem, 2.6vw, 2.3rem); line-height: 1.12; letter-spacing: -0.02em;
-    }
-    .grad {
-      background: linear-gradient(90deg, var(--accent), #c4b5fd 55%, var(--accent2));
-      -webkit-background-clip: text; background-clip: text; color: transparent;
-    }
+    .hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; margin-bottom: 18px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); backdrop-filter: blur(10px); position: relative; overflow: hidden; }
+    .card::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 30%); }
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--accent); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 10px; }
+    .eyebrow .tag { font-size: .72rem; color: var(--muted); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; letter-spacing: 0; text-transform: none; font-weight: 500; background: rgba(255,255,255,.02); }
+    .hero h2 { margin: 0 0 10px; font-size: clamp(1.7rem, 2.6vw, 2.3rem); line-height: 1.12; letter-spacing: -0.02em; }
+    .grad { background: linear-gradient(90deg, var(--accent), #c4b5fd 55%, var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
     .sub { color: var(--muted); margin: 0 0 18px; font-size: 1rem; line-height: 1.6; max-width: 62ch; }
     .status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-    .status-chip {
-      display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px;
-      border: 1px solid var(--border-strong); background: rgba(255,255,255,.03); font-weight: 600; font-size: .9rem;
-    }
+    .status-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border-strong); background: rgba(255,255,255,.03); font-weight: 600; font-size: .9rem; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
     .dot.ok { background: var(--ok); box-shadow: 0 0 14px rgba(52,211,153,.45); }
     .dot.warn { background: var(--warn); box-shadow: 0 0 14px rgba(251,191,36,.45); }
     .dot.bad { background: var(--bad); box-shadow: 0 0 14px rgba(251,113,133,.45); }
-    .run-id {
-      font-family: "JetBrains Mono", monospace; font-size: .78rem; color: var(--muted);
-      border: 1px solid var(--border); padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.02);
-    }
+    .run-id { font-family: "JetBrains Mono", monospace; font-size: .78rem; color: var(--muted); border: 1px solid var(--border); padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.02); }
     .progress-wrap { margin-top: 8px; }
     .progress-head { display:flex; justify-content:space-between; gap:12px; color: var(--muted); font-size:.88rem; margin-bottom:8px; }
-    .progress {
-      height: 12px; border-radius: 999px; background: rgba(148,163,184,.12);
-      overflow: hidden; border: 1px solid rgba(148,163,184,.14); position: relative;
-    }
-    .bar {
-      height: 100%; width: 0%;
-      background: linear-gradient(90deg, var(--accent), #7dd3fc 35%, var(--accent2));
-      box-shadow: 0 0 24px rgba(77,227,255,.35);
-      transition: width .7s cubic-bezier(.2,.8,.2,1);
-      position: relative;
-    }
-    .bar::after {
-      content: ""; position: absolute; inset: 0;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
-      transform: translateX(-100%); animation: sheen 2.8s infinite;
-    }
+    .progress { height: 12px; border-radius: 999px; background: rgba(148,163,184,.12); overflow: hidden; border: 1px solid rgba(148,163,184,.14); position: relative; }
+    .bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #7dd3fc 35%, var(--accent2)); box-shadow: 0 0 24px rgba(77,227,255,.35); transition: width .7s cubic-bezier(.2,.8,.2,1); position: relative; }
+    .bar::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); transform: translateX(-100%); animation: sheen 2.8s infinite; }
     @keyframes sheen { 100% { transform: translateX(100%); } }
     .meta-row { display:flex; gap:10px; flex-wrap:wrap; margin-top: 14px; }
-    .meta {
-      font-size: .8rem; color: var(--muted); padding: 7px 10px; border-radius: 10px;
-      border: 1px solid var(--border); background: rgba(255,255,255,.02);
-    }
+    .meta { font-size: .8rem; color: var(--muted); padding: 7px 10px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,.02); }
     .meta b { color: var(--text); font-weight: 600; }
 
-    /* Side network viz */
     .viz-card { display:flex; flex-direction:column; gap:14px; min-height: 100%; }
     .viz-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .viz-head h3 { margin:0; font-size:1rem; }
-    .viz {
-      flex: 1; min-height: 220px; border-radius: 14px; border: 1px solid var(--border);
-      background: radial-gradient(400px 220px at 50% 30%, rgba(77,227,255,.08), transparent 60%), rgba(255,255,255,.02);
-      position: relative; overflow: hidden;
-    }
+    .viz { flex: 1; min-height: 220px; border-radius: 14px; border: 1px solid var(--border); background: radial-gradient(400px 220px at 50% 30%, rgba(77,227,255,.08), transparent 60%), rgba(255,255,255,.02); position: relative; overflow: hidden; }
     .viz svg { width: 100%; height: 100%; display:block; }
     .node { fill: #0b1326; stroke: rgba(148,163,184,.5); stroke-width: 1.2; }
     .node.core { fill: url(#coreGrad); stroke: rgba(77,227,255,.9); }
-    .node.worker { fill: rgba(139,92,246,.18); stroke: rgba(139,92,246,.7); }
-    .node.active { stroke: rgba(52,211,153,.9); filter: drop-shadow(0 0 6px rgba(52,211,153,.35)); }
+    .node.worker { fill: rgba(139,92,246,.18); stroke: rgba(139,92,246,.7); transition: all .35s ease; }
+    .node.worker.active { fill: rgba(77,227,255,.25); stroke: rgba(52,211,153,.9); filter: drop-shadow(0 0 6px rgba(52,211,153,.35)); }
     .link { stroke: rgba(148,163,184,.22); stroke-width: 1; }
     .link.active { stroke: rgba(77,227,255,.55); stroke-dasharray: 4 6; animation: dash 6s linear infinite; }
     @keyframes dash { to { stroke-dashoffset: -100; } }
     .viz-stats { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-    .mini {
-      padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.02);
-    }
+    .mini { padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.02); }
     .mini .k { color: var(--muted); font-size: .78rem; margin-bottom: 4px; }
     .mini .v { font-family: "JetBrains Mono", monospace; font-weight: 600; font-size: 1.05rem; }
 
     .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; margin-bottom: 18px; }
-    .stat {
-      padding: 16px 16px 14px; border-radius: 14px; border: 1px solid var(--border);
-      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
-    }
+    .stat { padding: 16px 16px 14px; border-radius: 14px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015)); }
     .stat .k { color: var(--muted); font-size:.8rem; margin-bottom: 6px; }
     .stat .v { font-size: 1.55rem; font-weight: 700; font-family: "JetBrains Mono", monospace; letter-spacing: -0.02em; }
     .stat .s { color: var(--muted2); font-size: .75rem; margin-top: 4px; min-height: 1em; }
 
     .two { display:grid; grid-template-columns: 1fr 1fr; gap:18px; margin-bottom: 18px; }
+    .three { display:grid; grid-template-columns: repeat(3, 1fr); gap:18px; margin-bottom: 18px; }
     h3 { margin: 0 0 12px; font-size: 1rem; }
     table { width: 100%; border-collapse: collapse; }
     td { padding: 10px 0; border-bottom: 1px solid rgba(148,163,184,.1); vertical-align: top; }
@@ -244,36 +167,41 @@
     td:first-child { color: var(--muted); width: 46%; }
     .mono { font-family: "JetBrains Mono", monospace; }
     .muted { color: var(--muted); }
-    .tag {
-      display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
-      font-size:.78rem; border:1px solid var(--border); background: rgba(255,255,255,.03); color: var(--text);
-    }
+    .tag { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:.78rem; border:1px solid var(--border); background: rgba(255,255,255,.03); color: var(--text); }
     .tag.ok { color: var(--ok); border-color: rgba(52,211,153,.3); background: rgba(52,211,153,.08); }
     .tag.warn { color: var(--warn); border-color: rgba(251,191,36,.3); background: rgba(251,191,36,.08); }
     .tag.bad { color: var(--bad); border-color: rgba(251,113,133,.3); background: rgba(251,113,133,.08); }
     .tag.info { color: var(--accent); border-color: rgba(77,227,255,.3); background: rgba(77,227,255,.08); }
 
-    .about p { margin: 0 0 10px; line-height: 1.65; }
-    .stack { display:flex; flex-wrap:wrap; gap:8px; margin-top: 12px; }
-    .stack span {
-      font-size: .78rem; color: var(--muted); padding: 6px 10px; border-radius: 999px;
-      border: 1px solid var(--border); background: rgba(255,255,255,.02);
-    }
+    .trends-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 10px; }
+    .trend-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
+    .trend { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: rgba(255,255,255,.02); }
+    .trend .label { color: var(--muted); font-size: .78rem; margin-bottom: 4px; }
+    .trend .value { font-family: "JetBrains Mono", monospace; font-weight: 600; font-size: .95rem; margin-bottom: 6px; }
+    .spark { width: 100%; height: 36px; display:block; }
+    .spark path { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .spark .area { stroke: none; opacity: .18; }
+    .trend-empty { color: var(--muted); font-size: .9rem; padding: 4px 0; }
 
-    footer {
-      margin-top: 22px; color: var(--muted); font-size: .84rem;
-      display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center;
-    }
+    .info-card p { margin: 0 0 10px; line-height: 1.65; }
+    .info-card ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.6; }
+    .info-card li { margin: 4px 0; }
+    .stack { display:flex; flex-wrap:wrap; gap:8px; margin-top: 12px; }
+    .stack span { font-size: .78rem; color: var(--muted); padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,.02); }
+    .cta-row { display:flex; flex-wrap:wrap; gap:10px; margin-top: 12px; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--border-strong); background: rgba(255,255,255,.04); color: var(--text); font-weight: 600; font-size: .88rem; text-decoration:none; }
+    .btn:hover { text-decoration:none; border-color: rgba(77,227,255,.35); background: rgba(77,227,255,.08); }
+    .btn.primary { background: linear-gradient(135deg, rgba(77,227,255,.18), rgba(139,92,246,.18)); border-color: rgba(77,227,255,.35); }
+
+    footer { margin-top: 22px; color: var(--muted); font-size: .84rem; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center; }
     .error { color: #fcd34d; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
 
     @media (max-width: 980px) {
       .hero, .two { grid-template-columns: 1fr; }
-      .grid { grid-template-columns: repeat(2, 1fr); }
+      .grid, .trend-grid, .three { grid-template-columns: repeat(2, 1fr); }
     }
     @media (max-width: 560px) {
-      .grid { grid-template-columns: 1fr; }
+      .grid, .trend-grid, .three { grid-template-columns: 1fr; }
       header { align-items: flex-start; }
       .viz-stats { grid-template-columns: 1fr 1fr; }
       .wrap { padding: 18px 14px 48px; }
@@ -284,6 +212,7 @@
   </style>
 </head>
 <body>
+  <a href="#main" class="skip-link">Saltar al contenido</a>
   <div class="bg" aria-hidden="true">
     <span class="orb a"></span>
     <span class="orb b"></span>
@@ -293,118 +222,167 @@
   <div class="wrap">
     <header>
       <div class="brand">
-        <div class="mark">◆</div>
+        <div class="mark" aria-hidden="true">◆</div>
         <div>
           <h1 id="siteHost">didiloco.bsv.direct</h1>
           <p>DiLoCo WAN · estado público de la red</p>
         </div>
       </div>
       <div class="header-right">
-        <div class="pill live"><span class="pulse" id="livePulse"></span><span id="liveText">en vivo</span></div>
+        <div class="pill live" aria-label="Estado de actualización"><span class="pulse" id="livePulse"></span><span id="liveText">en vivo</span></div>
         <div class="pill" id="updated">Actualizando…</div>
       </div>
     </header>
 
-    <section class="hero">
-      <div class="card">
-        <div class="eyebrow">Entrenamiento distribuido <span class="tag">BSV + bitbeam</span></div>
-        <h2>Red DiLoCo sobre internet, <span class="grad">sin datacenter</span></h2>
-        <p class="sub">Sincronización periódica de adaptadores LoRA (DiLoCo/Nesterov outer) entre nodos WAN. Esta vista expone solo métricas agregadas y sanitizadas del coordinador.</p>
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="card">
+          <div class="eyebrow">Entrenamiento distribuido <span class="tag info">BSV + bitbeam</span></div>
+          <h2 id="hero-title">Red DiLoCo sobre internet, <span class="grad">sin datacenter</span></h2>
+          <p class="sub">Sincronización periódica de adaptadores LoRA (DiLoCo/Nesterov outer) entre nodos WAN con tolerancia a churn. Esta vista expone solo métricas agregadas y sanitizadas del coordinador.</p>
 
-        <div class="status-row">
-          <span class="status-chip"><span class="dot" id="dot"></span><span id="statusText">Conectando…</span></span>
-          <span class="run-id" id="runId">run: —</span>
-          <span id="stateTag" class="tag">—</span>
-        </div>
-
-        <div class="progress-wrap">
-          <div class="progress-head">
-            <span id="progressLabel">Ronda — / —</span>
-            <span class="mono" id="progressPct">0%</span>
+          <div class="status-row" aria-live="polite">
+            <span class="status-chip"><span class="dot" id="dot"></span><span id="statusText">Conectando…</span></span>
+            <span class="run-id" id="runId">run: —</span>
+            <span id="stateTag" class="tag">—</span>
           </div>
-          <div class="progress"><div class="bar" id="bar"></div></div>
+
+          <div class="progress-wrap" aria-label="Progreso de rondas">
+            <div class="progress-head">
+              <span id="progressLabel">Ronda — / —</span>
+              <span class="mono" id="progressPct">0%</span>
+            </div>
+            <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBar"><div class="bar" id="bar"></div></div>
+          </div>
+
+          <div class="meta-row">
+            <div class="meta">Workers activos: <b class="mono" id="workersMeta">—</b></div>
+            <div class="meta">Quorum: <b class="mono" id="quorumMeta">—</b></div>
+            <div class="meta">Global step: <b class="mono" id="gstepMeta">—</b></div>
+          </div>
         </div>
 
-        <div class="meta-row">
-          <div class="meta">Workers activos: <b class="mono" id="workersMeta">—</b></div>
-          <div class="meta">Quorum: <b class="mono" id="quorumMeta">—</b></div>
-          <div class="meta">Global step: <b class="mono" id="gstepMeta">—</b></div>
+        <div class="card viz-card">
+          <div class="viz-head">
+            <h3>Topología (agregada)</h3>
+            <span class="tag info mono" id="netTag">coordinator</span>
+          </div>
+          <div class="viz" aria-hidden="true">
+            <svg viewBox="0 0 400 240" preserveAspectRatio="xMidYMid meet" focusable="false">
+              <defs>
+                <linearGradient id="coreGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#4de3ff"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <g id="links">
+                <line class="link" x1="200" y1="120" x2="70" y2="60" />
+                <line class="link" x1="200" y1="120" x2="330" y2="60" />
+                <line class="link" x1="200" y1="120" x2="60" y2="170" />
+                <line class="link" x1="200" y1="120" x2="340" y2="170" />
+                <line class="link" x1="200" y1="120" x2="200" y2="30" />
+                <line class="link" x1="200" y1="120" x2="200" y2="210" />
+              </g>
+              <g id="workers-nodes">
+                <circle class="node worker" id="wn0" cx="70" cy="60" r="10" />
+                <circle class="node worker" id="wn1" cx="330" cy="60" r="10" />
+                <circle class="node worker" id="wn2" cx="60" cy="170" r="10" />
+                <circle class="node worker" id="wn3" cx="340" cy="170" r="10" />
+                <circle class="node worker" id="wn4" cx="200" cy="30" r="10" />
+                <circle class="node worker" id="wn5" cx="200" cy="210" r="10" />
+              </g>
+              <circle class="node core" cx="200" cy="120" r="18" />
+              <circle cx="200" cy="120" r="28" fill="none" stroke="rgba(77,227,255,.18)" stroke-width="1">
+                <animate attributeName="r" values="28;34;28" dur="3s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.5;0.15;0.5" dur="3s" repeatCount="indefinite" />
+              </circle>
+            </svg>
+          </div>
+          <div class="viz-stats">
+            <div class="mini"><div class="k">Updates pendientes</div><div class="v" id="pending">—</div></div>
+            <div class="mini"><div class="k">Nodos (últ. ronda)</div><div class="v" id="lastNodes">—</div></div>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div class="card viz-card">
-        <div class="viz-head">
-          <h3>Topología (agregada)</h3>
-          <span class="tag info mono" id="netTag">coordinator</span>
-        </div>
-        <div class="viz" aria-hidden="true">
-          <svg viewBox="0 0 400 240" preserveAspectRatio="xMidYMid meet">
-            <defs>
-              <linearGradient id="coreGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#4de3ff"/>
-                <stop offset="100%" stop-color="#8b5cf6"/>
-              </linearGradient>
-            </defs>
-            <g id="links">
-              <line class="link" x1="200" y1="120" x2="70" y2="60" />
-              <line class="link" x1="200" y1="120" x2="330" y2="60" />
-              <line class="link" x1="200" y1="120" x2="60" y2="170" />
-              <line class="link" x1="200" y1="120" x2="340" y2="170" />
-              <line class="link" x1="200" y1="120" x2="200" y2="30" />
-              <line class="link" x1="200" y1="120" x2="200" y2="210" />
-            </g>
-            <g id="workers-nodes">
-              <circle class="node worker" id="wn0" cx="70" cy="60" r="10" />
-              <circle class="node worker" id="wn1" cx="330" cy="60" r="10" />
-              <circle class="node worker" id="wn2" cx="60" cy="170" r="10" />
-              <circle class="node worker" id="wn3" cx="340" cy="170" r="10" />
-              <circle class="node worker" id="wn4" cx="200" cy="30" r="10" />
-              <circle class="node worker" id="wn5" cx="200" cy="210" r="10" />
-            </g>
-            <circle class="node core" cx="200" cy="120" r="18" />
-            <circle cx="200" cy="120" r="28" fill="none" stroke="rgba(77,227,255,.18)" stroke-width="1">
-              <animate attributeName="r" values="28;34;28" dur="3s" repeatCount="indefinite" />
-              <animate attributeName="opacity" values="0.5;0.15;0.5" dur="3s" repeatCount="indefinite" />
-            </circle>
-          </svg>
-        </div>
-        <div class="viz-stats">
-          <div class="mini"><div class="k">Updates pendientes</div><div class="v" id="pending">—</div></div>
-          <div class="mini"><div class="k">Nodos (últ. ronda)</div><div class="v" id="lastNodes">—</div></div>
-        </div>
-      </div>
-    </section>
+      <section class="grid" aria-label="Métricas principales">
+        <div class="stat card"><div class="k">Ronda actual</div><div class="v" id="round">—</div><div class="s" id="roundSub">—</div></div>
+        <div class="stat card"><div class="k">Rondas totales</div><div class="v" id="maxRounds">—</div><div class="s">objetivo del run</div></div>
+        <div class="stat card"><div class="k">Train loss (última)</div><div class="v" id="lastLoss">—</div><div class="s">última ronda completada</div></div>
+        <div class="stat card"><div class="k">Delta norm (última)</div><div class="v" id="lrDelta">—</div><div class="s">agregado de ronda</div></div>
+      </section>
 
-    <section class="grid">
-      <div class="stat card"><div class="k">Ronda actual</div><div class="v" id="round">—</div><div class="s" id="roundSub">—</div></div>
-      <div class="stat card"><div class="k">Rondas totales</div><div class="v" id="maxRounds">—</div><div class="s">objetivo del run</div></div>
-      <div class="stat card"><div class="k">Train loss (última)</div><div class="v" id="lastLoss">—</div><div class="s">última ronda completada</div></div>
-      <div class="stat card"><div class="k">Delta norm (última)</div><div class="v" id="lrDelta">—</div><div class="s">agregado de ronda</div></div>
-    </section>
-
-    <section class="two">
-      <div class="card">
-        <h3>Última ronda completada</h3>
-        <table>
-          <tr><td>Ronda</td><td class="mono" id="lrRound">—</td></tr>
-          <tr><td>Workers (ronda)</td><td class="mono" id="lrWorkers">—</td></tr>
-          <tr><td>Train loss</td><td class="mono" id="lrLoss2">—</td></tr>
-          <tr><td>Sync (s)</td><td class="mono" id="lrSync">—</td></tr>
-          <tr><td>Global step</td><td class="mono" id="lrStep">—</td></tr>
-          <tr><td>Upload total</td><td class="mono" id="lrUpBytes">—</td></tr>
-          <tr><td>State blob</td><td class="mono" id="lrStateBytes">—</td></tr>
-        </table>
-      </div>
-      <div class="card about">
-        <h3>Sobre la red</h3>
-        <p class="muted"><b>DiLoCo</b> entrena localmente durante <em>H</em> pasos y sincroniza solo deltas de adaptadores LoRA con un optimizador externo (Nesterov), reduciendo drásticamente el tráfico frente a sincronización por paso.</p>
-        <p class="muted">Diseñado para operar sobre enlaces WAN/domésticos con tolerancia a churn, compresión y transporte <b>bitbeam</b> (DHT) con identidad/admisión basada en <b>BSV</b> (MVP).</p>
-        <div class="stack">
-          <span>LoRA / QLoRA</span><span>DiLoCo + Nesterov</span><span>bitbeam v4</span><span>BSV identity (MVP)</span><span>WAN / churn tolerant</span>
+      <section class="card" aria-labelledby="trends-title" style="margin-bottom:18px">
+        <div class="trends-head">
+          <h3 id="trends-title" style="margin:0">Tendencias recientes (agregadas)</h3>
+          <span class="muted" style="font-size:.85rem" id="trends-meta">sin datos históricos</span>
         </div>
-        <p class="muted" style="margin-top:12px;font-size:.85rem">Privacidad: esta página no expone IDs de nodos, claves, endpoints de control, logs ni hashes sensibles.</p>
-      </div>
-    </section>
+        <div id="trends-empty" class="trend-empty">Se mostrarán sparklines cuando el coordinador publique historial de rondas.</div>
+        <div id="trends-grid" class="trend-grid" hidden>
+          <div class="trend"><div class="label">Train loss</div><div class="value" id="trend-loss-val">—</div><svg class="spark" id="spark-loss" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de train loss"></svg></div>
+          <div class="trend"><div class="label">Delta norm</div><div class="value" id="trend-delta-val">—</div><svg class="spark" id="spark-delta" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de delta norm"></svg></div>
+          <div class="trend"><div class="label">Sync (s)</div><div class="value" id="trend-sync-val">—</div><svg class="spark" id="spark-sync" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de tiempo de sincronización"></svg></div>
+          <div class="trend"><div class="label">Upload / ronda</div><div class="value" id="trend-bytes-val">—</div><svg class="spark" id="spark-bytes" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de bytes subidos"></svg></div>
+        </div>
+      </section>
+
+      <section class="two">
+        <div class="card">
+          <h3>Última ronda completada</h3>
+          <table aria-label="Detalle de la última ronda completada">
+            <tr><td>Ronda</td><td class="mono" id="lrRound">—</td></tr>
+            <tr><td>Workers (ronda)</td><td class="mono" id="lrWorkers">—</td></tr>
+            <tr><td>Train loss</td><td class="mono" id="lrLoss2">—</td></tr>
+            <tr><td>Delta norm</td><td class="mono" id="lrDelta2">—</td></tr>
+            <tr><td>Sync (s)</td><td class="mono" id="lrSync">—</td></tr>
+            <tr><td>Global step</td><td class="mono" id="lrStep">—</td></tr>
+            <tr><td>Upload total</td><td class="mono" id="lrUpBytes">—</td></tr>
+            <tr><td>State blob</td><td class="mono" id="lrStateBytes">—</td></tr>
+          </table>
+        </div>
+        <div class="card info-card">
+          <h3>Cómo funciona DiLoCo</h3>
+          <p class="muted"><b>DiLoCo</b> reduce el tráfico de red entrenando localmente durante <em>H</em> pasos y sincronizando periódicamente solo los <b>deltas de adaptadores LoRA</b> (no los pesos completos del modelo base).</p>
+          <ul>
+            <li>Los workers entrenan en sus shards/datos y envían deltas comprimidos al coordinador.</li>
+            <li>El coordinador agrega por quórum y aplica el paso externo (Nesterov), publicando un nuevo estado global verificable.</li>
+            <li>El estado se distribuye de forma reanudable/verificada (chunks, hash/manifest) y tolera churn/reconexiones.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="three" aria-label="Información del proyecto">
+        <div class="card info-card">
+          <h3>Stack y red</h3>
+          <p class="muted">Arquitectura orientada a WAN: coordinación síncrona por rondas, adaptadores ligeros y transporte resiliente para nodos domésticos o heterogéneos.</p>
+          <div class="stack" aria-label="Tecnologías">
+            <span>LoRA / QLoRA</span><span>DiLoCo + Nesterov outer</span><span>bitbeam v4 / DHT</span><span>BSV identity (MVP)</span><span>HTTP/gRPC</span><span>Compresión + resume</span>
+          </div>
+        </div>
+        <div class="card info-card">
+          <h3>Seguridad y privacidad</h3>
+          <ul>
+            <li>Esta página es <b>pública y sanitizada</b>: solo métricas agregadas.</li>
+            <li>No expone IDs de nodos, pubkeys/WIF, endpoints de control, logs, rutas ni hashes sensibles.</li>
+            <li>El plano de control (dashboard/agente/coordinador) debe operar autenticado y en red privada/proxy seguro.</li>
+            <li>Identidad/admisión BSV y firmas están en evolución (MVP; hardening en curso).</li>
+          </ul>
+        </div>
+        <div class="card info-card">
+          <h3>Unirse y contribuir</h3>
+          <p class="muted">La participación depende de la política del operador (identidad, allowlist, invite y configuración compatible del run).</p>
+          <ul>
+            <li>Consulta la documentación del repositorio: <code>README.md</code>, <code>docs/ONBOARDING.md</code> y <code>docs/PLAN_VANGUARDIA.md</code>.</li>
+            <li>Para operar un nodo: prepara entorno, config/base compatible, identidad (si aplica) e invite del coordinador.</li>
+            <li>Para contribuir: abre issues/PRs, ejecuta tests y valida/despliega cambios de forma incremental.</li>
+          </ul>
+          <div class="cta-row">
+            <a class="btn primary" href="/api/status" target="_blank" rel="noopener">Ver API pública</a>
+            <a class="btn" href="#main">Estado en vivo</a>
+          </div>
+        </div>
+      </section>
+    </main>
 
     <footer>
       <div id="footBrand">didiloco.bsv.direct · Estado público (sanitizado)</div>
@@ -455,17 +433,12 @@
       $('liveText').textContent = kind === 'bad' ? 'atención' : kind === 'warn' ? 'en espera' : 'en vivo';
     }
 
-    function setViz(activeWorkers, totalSlots) {
+    function setViz(activeWorkers) {
       const nodes = [0,1,2,3,4,5].map(i => $('wn' + i));
       const links = Array.from(document.querySelectorAll('#links .link'));
       const n = Math.max(0, Math.min(Number(activeWorkers || 0), nodes.length));
-      nodes.forEach((el, i) => {
-        if (!el) return;
-        if (i < n) el.classList.add('active'); else el.classList.remove('active');
-      });
-      links.forEach((el, i) => {
-        if (i < n) el.classList.add('active'); else el.classList.remove('active');
-      });
+      nodes.forEach((el, i) => { if (!el) return; if (i < n) el.classList.add('active'); else el.classList.remove('active'); });
+      links.forEach((el, i) => { if (i < n) el.classList.add('active'); else el.classList.remove('active'); });
       $('netTag').textContent = n > 0 ? (n + ' worker' + (n === 1 ? '' : 's')) : 'sin workers';
     }
 
@@ -480,6 +453,56 @@
         } catch (e) { lastErr = e; }
       }
       throw lastErr || new Error('no endpoint');
+    }
+
+    function sparkPath(values, w = 120, h = 36, pad = 3) {
+      const vals = values.filter(v => v != null && isFinite(v)).map(Number);
+      if (vals.length < 2) return null;
+      const min = Math.min(...vals), max = Math.max(...vals);
+      const range = (max - min) || 1;
+      const step = w / (vals.length - 1);
+      const pts = vals.map((v, i) => {
+        const x = i * step;
+        const y = h - pad - ((v - min) / range) * (h - pad * 2);
+        return [x, y];
+      });
+      const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join(' ');
+      const area = d + ` L ${w.toFixed(2)} ${(h - pad).toFixed(2)} L 0 ${(h - pad).toFixed(2)} Z`;
+      return { d, area };
+    }
+
+    function renderSpark(id, values, color) {
+      const svg = $(id);
+      if (!svg) return;
+      const p = sparkPath(values);
+      if (!p) { svg.innerHTML = ''; return; }
+      svg.innerHTML = `<path class="area" d="${p.area}" fill="${color}"></path><path d="${p.d}" stroke="${color}"></path>`;
+    }
+
+    function renderTrends(history) {
+      const hist = Array.isArray(history) ? history : [];
+      const has = hist.length >= 2;
+      $('trends-grid').hidden = !has;
+      $('trends-empty').hidden = has;
+      if (!has) {
+        $('trends-meta').textContent = hist.length === 1 ? '1 ronda registrada (insuficiente para tendencia)' : 'sin datos históricos';
+        ['loss','delta','sync','bytes'].forEach(k => { const el = $('spark-' + k); if (el) el.innerHTML = ''; });
+        $('trend-loss-val').textContent = '—';
+        $('trend-delta-val').textContent = '—';
+        $('trend-sync-val').textContent = '—';
+        $('trend-bytes-val').textContent = '—';
+        return;
+      }
+      $('trends-meta').textContent = `últimas ${hist.length} rondas`;
+      renderSpark('spark-loss', hist.map(h => h.train_loss), '#4de3ff');
+      renderSpark('spark-delta', hist.map(h => h.delta_norm), '#8b5cf6');
+      renderSpark('spark-sync', hist.map(h => h.sync_seconds), '#34d399');
+      renderSpark('spark-bytes', hist.map(h => h.update_bytes_total), '#fbbf24');
+      const last = hist[hist.length - 1] || {};
+      $('trend-loss-val').textContent = fmtSmart(last.train_loss);
+      $('trend-delta-val').textContent = fmtSmart(last.delta_norm);
+      $('trend-sync-val').textContent = last.sync_seconds == null ? '—' : fmt(last.sync_seconds, 2) + ' s';
+      $('trend-bytes-val').textContent = fmtBytes(last.update_bytes_total);
     }
 
     function render(data) {
@@ -500,6 +523,8 @@
       $('bar').style.width = pct.toFixed(1) + '%';
       $('progressLabel').textContent = max > 0 ? `Ronda ${fmtInt(round)} / ${fmtInt(max)}` : `Ronda ${fmtInt(round)}`;
       $('progressPct').textContent = max > 0 ? pct.toFixed(0) + '%' : '—';
+      const pbar = $('progressBar');
+      if (pbar) { pbar.setAttribute('aria-valuenow', String(Math.round(pct))); pbar.setAttribute('aria-valuetext', max > 0 ? `${fmtInt(round)} de ${fmtInt(max)}` : `Ronda ${fmtInt(round)}`); }
 
       let kind = 'warn', label = 'En espera', tag = '<span class="tag warn">idle</span>';
       if (data.has_failure) {
@@ -521,13 +546,15 @@
       $('lrRound').textContent = lr ? (fmtInt(lr.round) + ' → ' + fmtInt(lr.new_round)) : '—';
       $('lrWorkers').textContent = lr ? fmtInt(lr.nodes_count) : '—';
       $('lrDelta').textContent = lr ? fmtSmart(lr.delta_norm) : '—';
+      $('lrDelta2').textContent = lr ? fmtSmart(lr.delta_norm) : '—';
       $('lrLoss2').textContent = lr ? fmtSmart(lr.train_loss) : '—';
       $('lrSync').textContent = lr ? fmt(lr.sync_seconds, 3) : '—';
       $('lrStep').textContent = lr ? fmtInt(lr.global_step) : '—';
       $('lrUpBytes').textContent = lr ? fmtBytes(lr.update_bytes_total) : '—';
       $('lrStateBytes').textContent = lr ? fmtBytes(lr.state_blob_bytes) : '—';
 
-      setViz(workers, 6);
+      renderTrends(data.history || []);
+      setViz(workers);
 
       const ts = data.updated_at ? new Date(Number(data.updated_at) * 1000) : new Date();
       $('updated').textContent = 'Actualizado: ' + ts.toLocaleTimeString();
@@ -537,7 +564,8 @@
 
     function renderError(err) {
       setStatus('warn', 'Sin datos (coordinador no disponible)');
-      setViz(0, 6);
+      setViz(0);
+      renderTrends([]);
       $('updated').textContent = 'Sin conexión';
       $('footMsg').textContent = 'No se pudo obtener estado público: ' + (err && err.message ? err.message : err);
       $('footMsg').className = 'muted error';

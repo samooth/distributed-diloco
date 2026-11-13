@@ -15,11 +15,11 @@ Objetivo: que el proyecto se perciba “kickass” desde el primer contacto: est
 
 ### 1.1 Web pública de estado (`web/public/index.html`, `didiloco.bsv.direct`)
 - [x] Endpoint sanitizado `/v1/public/status` + fallback resiliente en nginx (ya operativo).
-- [~] Rediseño visual premium: hero/identidad BSV+bitbeam, layout claro, animaciones sutiles, tipografía y jerarquía.
-- [~] Visualización de estado más rica: progreso, métricas clave, última ronda, estado de red, indicadores en vivo, manejo elegante de “sin datos”.
-- [ ] Histórico agregado público (sparklines/tendencias) cuando el endpoint exponga series; degradar con gracia si no hay datos.
-- [ ] Secciones informativas: cómo funciona DiLoCo, stack (bitbeam/BSV, LoRA), seguridad/privacidad, CTA para unirse/contribuir (según política).
-- [ ] Accesibilidad, responsive, performance (sin dependencias pesadas innecesarias), i18n/es-en opcional.
+- [x] Rediseño visual premium: hero/identidad BSV+bitbeam, layout claro, animaciones sutiles, tipografía y jerarquía.
+- [x] Visualización de estado más rica: progreso, métricas clave, última ronda, estado de red, indicadores en vivo, manejo elegante de “sin datos”.
+- [x] Histórico agregado público (sparklines/tendencias) cuando el endpoint exponga series; degradación elegante si no hay datos (`public_status.history` sanitizado, últimas rondas).
+- [x] Secciones informativas: cómo funciona DiLoCo, stack (bitbeam/BSV, LoRA), seguridad/privacidad, CTA para unirse/contribuir (según política).
+- [x] Accesibilidad, responsive, performance (sin dependencias pesadas innecesarias): landmarks/skip-link, ARIA/progressbar, focus visible, responsive; i18n es/en opcional pendiente.
 
 ### 1.2 Dashboard/console de agente (`web/dashboard.*`, `web/index.html`, `web/network.*`)
 - [~] Pulido visual y consistencia (tema, componentes, tablas, empty states, toasts, charts).
@@ -141,4 +141,5 @@ Objetivo: convertir la red en infraestructura colaborativa verificable.
 - 2026-11-13 (P2.2/P2, transporte+compresión, en curso): `run_coordinator.py` exporta allowlist efectiva a archivo (`checkpoint_dir/allowed_peer_pubkeys.txt`) y lo pasa al túnel de identidad para facilitar late-join/revocación por actualización de archivo; base de soporte opcional `zstd` en compresión/config (disponibilidad por backend). Pendiente negociación end-to-end y compresión efectiva de payloads.
 - 2026-11-13 (P2, medición bytes/sync): coordinador registra bytes recibidos por update y métricas de ronda (`update_bytes_total`, `update_bytes_by_node`, `state_blob_bytes`); worker agrega totales en resumen (`total_train/submit_seconds`, `total_upload/state_response_bytes`, `avg_sync_fraction`). Tests 44 OK.
 - 2026-11-13 (P2, UI/observabilidad): métricas de bytes/sync expuestas en `public_status` (última ronda) y visualizadas en web pública, dashboard y network (upload total/state blob por ronda), con fallback cuando no hay datos. Tests 44 OK.
+- 2026-11-13 (P1.1, web pública): `public_status` expone historial agregado sanitizado (`history`, últimas 24 rondas, sin IDs/claves/logs) para tendencias; `web/public/index.html` actualizado con sparklines/tendencias (loss, delta norm, sync, upload) con degradación elegante, secciones informativas ampliadas (cómo funciona, stack bitbeam/BSV+LoRA, seguridad/privacidad, unirse/contribuir según política) y mejoras de accesibilidad/responsive/performance (skip-link, landmarks, ARIA/progressbar, focus visible). Tests 44 OK. Commit `d09e8e8`.
 - 2026-11-12 (infra reciente): `/v1/public/status`, deploy `didiloco.bsv.direct` (`/var/www/didiloco`, `proxy-net`), auth HTTP Basic/token en dashboard/agente, fixes de deploy y runtime Docker (numpy).

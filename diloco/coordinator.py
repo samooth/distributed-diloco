@@ -909,6 +909,20 @@ class Coordinator:
                     "nodes_count": len(last.get("nodes") or []),
                     "done": bool(last.get("done", False)),
                 }
+            # Sanitized recent history for public trends (no node IDs/keys/logs)
+            pub_history = []
+            for item in list(self.history)[-24:]:
+                if not isinstance(item, dict):
+                    continue
+                pub_history.append({
+                    "round": int(item.get("round", 0)),
+                    "train_loss": float(item["train_loss"]) if item.get("train_loss") is not None else None,
+                    "delta_norm": float(item["delta_norm"]) if item.get("delta_norm") is not None else None,
+                    "sync_seconds": float(item["sync_seconds"]) if item.get("sync_seconds") is not None else None,
+                    "update_bytes_total": int(item["update_bytes_total"]) if item.get("update_bytes_total") is not None else None,
+                    "state_blob_bytes": int(item["state_blob_bytes"]) if item.get("state_blob_bytes") is not None else None,
+                    "nodes_count": len(item.get("nodes") or []),
+                })
             return {
                 "ok": self.failure is None,
                 "run_id": self.config.run_id,
@@ -922,6 +936,7 @@ class Coordinator:
                 "quorum": int(self.config.coordinator.quorum),
                 "min_workers": int(self.config.coordinator.min_workers),
                 "last_round": last_round,
+                "history": pub_history,
                 "updated_at": time.time(),
             }
 
