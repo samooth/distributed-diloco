@@ -405,6 +405,7 @@ class Coordinator:
                             train_loss=float(meta.get("train_loss", 0.0)),
                             update_hash=hash_blob(body),
                             node_sig=str(meta.get("node_sig", "") or ""),
+                            update_bytes=len(body),
                         )
                         self._send_bytes(200, result, "application/octet-stream")
                         return
@@ -660,6 +661,7 @@ class Coordinator:
         train_loss: float,
         update_hash: str,
         node_sig: str = "",
+        update_bytes: int = 0,
     ) -> bytes:
         if weight <= 0 or not torch.isfinite(torch.tensor(weight)).item():
             raise ApiError(400, "weight must be positive and finite")
@@ -699,6 +701,7 @@ class Coordinator:
                 "weight": float(weight),
                 "train_loss": float(train_loss),
                 "update_hash": str(update_hash),
+                "update_bytes": int(update_bytes or 0),
                 "received_at": time.time(),
             }
             self.registered[node_id]["last_seen"] = time.time()
@@ -762,6 +765,9 @@ class Coordinator:
         self.global_step = self.round_index * int(self.config.train.H)
         self._state_hash = hash_state(self.global_state)
         self._invalidate_state_blob_locked()
+        state_blob_bytes = int(self._ensure_state_blob_locked().get("blob_size", 0) or 0)
+        update_bytes_by_node = {node_id: int(self.updates[node_id].get("update_bytes", 0) or 0) for node_id in node_ids}
+        update_bytes_total = int(sum(update_bytes_by_node.values()))
         metrics: Dict[str, Any] = {
             "round": round_id,
             "new_round": self.round_index,
@@ -774,6 +780,9 @@ class Coordinator:
             },
             "train_loss": float(weighted_loss),
             "sync_seconds": float(sync_seconds),
+            "update_bytes_total": update_bytes_total,
+            "update_bytes_by_node": update_bytes_by_node,
+            "state_blob_bytes": state_blob_bytes,
             "state_hash": self._state_hash,
             "done": self.round_index >= int(self.config.coordinator.max_rounds),
         }

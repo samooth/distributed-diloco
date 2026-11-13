@@ -179,6 +179,7 @@ else:
                     train_loss=float(meta.get("train_loss", 0.0)),
                     update_hash="grpc",
                     node_sig=str(meta.get("node_sig", "") or ""),
+                    update_bytes=len(request.payload),
                 )
             except Exception as exc:  # noqa: BLE001
                 from .coordinator import ApiError

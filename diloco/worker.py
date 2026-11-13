@@ -813,6 +813,10 @@ class Worker:
         stale_retries = 0
         run_failed = False
         last_metrics: Dict[str, Any] = {}
+        total_train_seconds = 0.0
+        total_submit_seconds = 0.0
+        total_upload_bytes = 0
+        total_state_response_bytes = 0
         while int(meta["round"]) < max_rounds:
             round_id = int(meta["round"])
             global_state = clone_state(state)
@@ -1149,6 +1153,10 @@ class Worker:
                 "done": bool(new_meta.get("done", False)),
             }
             self._append_log(record)
+            total_train_seconds += float(train_seconds)
+            total_submit_seconds += float(submit_seconds)
+            total_upload_bytes += int(record["upload_bytes"])
+            total_state_response_bytes += int(state_response_bytes)
             LOG.info(
                 "%s round %s -> %s loss=%.6f eval=%s delta_norm=%.6f",
                 self.node_id,
@@ -1167,6 +1175,8 @@ class Worker:
             final_eval = self.backend.evaluate().get("eval_loss")
         else:
             final_eval = None
+        total_round_wall = round(total_train_seconds + total_submit_seconds, 6)
+        avg_sync_fraction = round(total_submit_seconds / total_round_wall, 6) if total_round_wall > 0 else 0.0
         summary = {
             "node_id": self.node_id,
             "rounds_done": rounds_done,
@@ -1177,6 +1187,11 @@ class Worker:
             "registered_at_start": info.get("registered", []),
             "last_metrics": last_metrics,
             "failure": "round timed out waiting for quorum" if run_failed else None,
+            "total_train_seconds": round(total_train_seconds, 6),
+            "total_submit_seconds": round(total_submit_seconds, 6),
+            "total_upload_bytes": int(total_upload_bytes),
+            "total_state_response_bytes": int(total_state_response_bytes),
+            "avg_sync_fraction": avg_sync_fraction,
         }
         self._append_log({"node_id": self.node_id, "summary": summary})
         return summary
