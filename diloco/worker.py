@@ -31,6 +31,7 @@ from .checkpoint import load_initial_state
 from .config import ExperimentConfig
 from .protocol import hash_blob, pack_message, unpack_message
 from .tensor_utils import clone_state, global_norm, hash_state, scale_state, subtract_state
+from .wire import available_wire_codecs, compress_wire, decompress_wire, negotiate_wire_codec, normalize_codec, parse_accept_wire
 
 LOG = logging.getLogger("diloco.worker")
 
@@ -114,6 +115,16 @@ class Worker:
             pass
         return context
 
+    def _wire_submit_codec(self) -> str:
+        pref = str(self.config.coordinator.wire_compression or "none")
+        if not pref or pref == "none":
+            return ""
+        if pref == "auto":
+            codecs = available_wire_codecs()
+            return codecs[0] if codecs else ""
+        pref = normalize_codec(pref)
+        return pref if pref in available_wire_codecs() else ""
+
     def _get_grpc_client(self) -> Optional[GrpcWorkerClient]:
         if self.config.coordinator.transport != "grpc":
             return None
@@ -156,6 +167,10 @@ class Worker:
     ) -> tuple[int, bytes, str, Dict[str, str]]:
         url = self.coordinator_url + path
         headers = dict(self._headers())
+        # Advertise wire decompression support for binary responses (state/update)
+        accept_wire = ",".join(available_wire_codecs())
+        if accept_wire:
+            headers.setdefault("X-DiLoCo-Accept-Wire-Compression", accept_wire)
         if extra_headers:
             headers.update(extra_headers)
         if body is not None:
@@ -175,15 +190,34 @@ class Worker:
                 ) as response:
                     status = int(response.status)
                     resp_headers = {k: v for k, v in response.headers.items()}
+                    wire_codec_resp = normalize_codec(resp_headers.get("X-DiLoCo-Wire-Compression", ""))
                     try:
                         data = response.read()
                     except http.client.IncompleteRead as exc:
+                        if wire_codec_resp:
+                            last_exc = exc
+                            raise
                         if allow_partial and exc.partial:
+                            resp_headers["_wire_bytes"] = str(len(exc.partial))
                             return status, bytes(exc.partial), response.headers.get_content_type() or "", resp_headers
                         raise
+                    wire_bytes = len(data)
+                    resp_headers["_wire_bytes"] = str(wire_bytes)
+                    if wire_codec_resp:
+                        try:
+                            data = decompress_wire(data, wire_codec_resp)
+                        except Exception as dec_exc:  # noqa: BLE001
+                            raise CoordinatorError(0, f"failed to decompress wire response ({wire_codec_resp}): {dec_exc}") from dec_exc
                     return status, data, response.headers.get_content_type() or "", resp_headers
             except urllib.error.HTTPError as exc:
                 raw = exc.read()
+                wire_bytes = len(raw)
+                wire_codec_err = normalize_codec(exc.headers.get("X-DiLoCo-Wire-Compression", "") if exc.headers else "")
+                if wire_codec_err and raw:
+                    try:
+                        raw = decompress_wire(raw, wire_codec_err)
+                    except Exception:
+                        pass
                 message = raw.decode("utf-8", errors="replace")
                 try:
                     payload = json.loads(message)
@@ -200,7 +234,7 @@ class Worker:
                 last_exc = exc
                 if allow_partial and exc.partial:
                     # Caller will decide how to resume
-                    return 200, bytes(exc.partial), "", {}
+                    return 200, bytes(exc.partial), "", {"_wire_bytes": str(len(exc.partial))}
                 LOG.warning("incomplete read on %s %s (attempt %s/%s): %s bytes, retrying", method, path, attempt + 1, attempts, len(exc.partial))
             except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, TimeoutError) as exc:
                 last_exc = exc
@@ -261,8 +295,9 @@ class Worker:
                 return False
         return True
 
-    def _download_state_blob_http(self, expected_meta: Optional[Mapping[str, Any]] = None) -> bytes:
-        """Download /v1/state with Range-based resume, chunk/manifest verification and idempotent retries."""
+    def _download_state_blob_http(self, expected_meta: Optional[Mapping[str, Any]] = None) -> tuple[bytes, int]:
+        """Download /v1/state with Range-based resume, chunk/manifest verification and idempotent retries.
+        Returns (uncompressed_blob, wire_bytes_downloaded)."""
         query = urllib.parse.urlencode({"node_id": self.node_id})
         path = f"/v1/state?{query}"
         expected_hash = str((expected_meta or {}).get("state_blob_hash", "") or "")
@@ -274,10 +309,11 @@ class Worker:
 
         # Small/unknown blobs: single request (compatibility path)
         if expected_size <= 0 or (expected_size <= 8 * 1024 * 1024 and not manifest_hashes):
-            _, raw, _, _ = self._request("GET", path)
+            _, raw, _, resp_headers = self._request("GET", path)
+            wire_bytes = int(resp_headers.get("_wire_bytes", len(raw)) or len(raw))
             if not self._verify_state_blob(raw, expected_hash, manifest_hashes, manifest_chunk_size):
                 raise CoordinatorError(0, "state blob hash/manifest mismatch")
-            return raw
+            return raw, wire_bytes
 
         chunk_size = manifest_chunk_size if manifest_chunk_size > 0 else 8 * 1024 * 1024
         if chunk_size <= 0:
@@ -301,6 +337,7 @@ class Worker:
         attempts = 0
         max_attempts = 30
         restart_count = 0
+        total_wire_bytes = 0
         while offset < expected_size and attempts < max_attempts:
             end = min(expected_size - 1, offset + chunk_size - 1)
             try:
@@ -317,6 +354,7 @@ class Worker:
                         LOG.warning("%s range not satisfiable at offset %s, restarting state download", self.node_id, offset)
                         buf.clear()
                         offset = 0
+                        total_wire_bytes = 0
                         restart_count += 1
                         continue
                 LOG.warning("%s state chunk download failed (attempt %s): %s", self.node_id, attempts, exc)
@@ -328,13 +366,15 @@ class Worker:
                 time.sleep(min(1.5 * attempts, 8.0))
                 continue
 
+            wire_chunk_bytes = int(resp_headers.get("_wire_bytes", len(data)) or len(data))
+
             if status == 200:
                 if data and offset == 0:
                     if not self._verify_state_blob(data, expected_hash, manifest_hashes, manifest_chunk_size):
                         attempts += 1
                         LOG.warning("%s full state blob/manifest mismatch (attempt %s)", self.node_id, attempts)
                         continue
-                    return data
+                    return data, wire_chunk_bytes
                 attempts += 1
                 continue
 
@@ -347,6 +387,7 @@ class Worker:
                     LOG.warning("%s coordinator state changed during download, restarting", self.node_id)
                     buf.clear()
                     offset = 0
+                    total_wire_bytes = 0
                     restart_count += 1
                     try:
                         fresh = self.get_state_meta()
@@ -364,6 +405,7 @@ class Worker:
                 raise CoordinatorError(0, "coordinator state kept changing during download")
 
             buf.extend(data)
+            total_wire_bytes += wire_chunk_bytes
             new_offset = offset + len(data)
             if manifest_hashes and manifest_chunk_size > 0:
                 verified_chunks = len(buf) // manifest_chunk_size
@@ -396,7 +438,7 @@ class Worker:
         blob = bytes(buf[:expected_size])
         if not self._verify_state_blob(blob, expected_hash, manifest_hashes, manifest_chunk_size):
             raise CoordinatorError(0, "state blob hash/manifest mismatch after resumable download")
-        return blob
+        return blob, total_wire_bytes
 
     def _download_state_blob_grpc(self, client: Any, expected_meta: Optional[Mapping[str, Any]] = None) -> bytes:
         """Download state via gRPC chunk RPC with manifest verification, resume-from-offset and state-change restart."""
@@ -898,14 +940,14 @@ class Worker:
                 self._last_state_fetch = {"source": "cache", "bytes": len(cached), "seconds": round(time.time() - fetch_t0, 6)}
                 return meta, clone_state(state)
 
-        raw = self._download_state_blob_http(expected_meta)
+        raw, wire_bytes = self._download_state_blob_http(expected_meta)
         meta, state = unpack_message(raw)
         self._validate_state(meta, state)
         state_hash = str(meta.get("state_hash", "") or "")
         if state_hash:
             blob_hash = str((expected_meta or {}).get("state_blob_hash", "") or "") or hash_blob(raw)
             self._save_cached_state_blob(state_hash, raw, blob_hash, meta.get("round"))
-        self._last_state_fetch = {"source": "http", "bytes": len(raw), "seconds": round(time.time() - fetch_t0, 6)}
+        self._last_state_fetch = {"source": "http", "bytes": int(wire_bytes), "blob_bytes": len(raw), "seconds": round(time.time() - fetch_t0, 6)}
         return meta, clone_state(state)
 
     def _validate_state(
@@ -1063,11 +1105,15 @@ class Worker:
                 except Exception as exc:  # noqa: BLE001
                     LOG.warning("%s could not sign update: %s", self.node_id, exc)
             submit_t0 = time.time()
+            upload_wire_bytes = 0
+            state_response_wire_bytes = 0
             client = self._get_grpc_client()
             if client is not None:
                 blob = pack_message(payload_meta, upload_state)
+                upload_wire_bytes = len(blob)
                 try:
                     raw = client.submit(blob)
+                    state_response_wire_bytes = len(raw)
                 except Exception as exc:  # noqa: BLE001
                     if grpc is not None and isinstance(exc, grpc.RpcError):
                         status = {
@@ -1160,20 +1206,37 @@ class Worker:
                     raise mapped
             else:
                 blob = pack_message(payload_meta, upload_state)
+                upload_wire_bytes = len(blob)
+                wire_codec = self._wire_submit_codec()
+                send_blob = blob
+                submit_headers: Dict[str, str] = {}
+                if wire_codec:
+                    try:
+                        send_blob = compress_wire(blob, wire_codec)
+                        upload_wire_bytes = len(send_blob)
+                        submit_headers["X-DiLoCo-Wire-Compression"] = wire_codec
+                    except Exception as exc:  # noqa: BLE001
+                        LOG.warning("%s wire compression failed for submit, sending uncompressed: %s", self.node_id, exc)
+                        send_blob = blob
+                        upload_wire_bytes = len(blob)
+                        submit_headers = {}
                 query = urllib.parse.urlencode({"node_id": self.node_id, "round": round_id})
                 raw = b""
+                submit_resp_headers: Dict[str, str] = {}
                 submit_attempts = 0
                 max_submit_attempts = 6
                 submitted_ok = False
                 while submit_attempts < max_submit_attempts and not submitted_ok:
                     submit_attempts += 1
                     try:
-                        _, raw, _, _ = self._request(
+                        _, raw, _, submit_resp_headers = self._request(
                             "POST",
                             f"/v1/update?{query}",
-                            blob,
+                            send_blob,
                             content_type="application/octet-stream",
+                            extra_headers=submit_headers or None,
                         )
+                        state_response_wire_bytes = int(submit_resp_headers.get("_wire_bytes", len(raw)) or len(raw))
                         submitted_ok = True
                         break
                     except CoordinatorError as exc:
@@ -1292,7 +1355,9 @@ class Worker:
                 if not submitted_ok:
                     raise CoordinatorError(0, f"submit failed after {max_submit_attempts} attempts")
             submit_seconds = round(max(0.0, time.time() - submit_t0), 6)
-            state_response_bytes = len(raw)
+            state_response_blob_bytes = len(raw)
+            if not state_response_wire_bytes:
+                state_response_wire_bytes = state_response_blob_bytes
             new_meta, new_state = unpack_message(raw)
             self._validate_state(new_meta, new_state)
             rounds_done += 1
@@ -1314,8 +1379,10 @@ class Worker:
                 "delta_bytes": int(
                     sum(v.numel() * v.element_size() for v in delta.values())
                 ),
-                "upload_bytes": len(blob),
-                "state_response_bytes": state_response_bytes,
+                "upload_bytes": int(upload_wire_bytes),
+                "upload_blob_bytes": int(len(blob)) if 'blob' in locals() and blob else int(upload_wire_bytes),
+                "state_response_bytes": int(state_response_wire_bytes),
+                "state_response_blob_bytes": int(state_response_blob_bytes),
                 "train_seconds": train_seconds,
                 "submit_seconds": submit_seconds,
                 "sync_fraction": sync_fraction,
@@ -1326,7 +1393,7 @@ class Worker:
             total_train_seconds += float(train_seconds)
             total_submit_seconds += float(submit_seconds)
             total_upload_bytes += int(record["upload_bytes"])
-            total_state_response_bytes += int(state_response_bytes)
+            total_state_response_bytes += int(record["state_response_bytes"])
             LOG.info(
                 "%s round %s -> %s loss=%.6f eval=%s delta_norm=%.6f",
                 self.node_id,

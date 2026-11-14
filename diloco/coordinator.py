@@ -38,6 +38,7 @@ from .tensor_utils import (
     global_norm,
     hash_state,
 )
+from .wire import available_wire_codecs, compress_wire, decompress_wire, negotiate_wire_codec, normalize_codec, parse_accept_wire
 
 LOG = logging.getLogger("diloco.coordinator")
 
@@ -290,6 +291,7 @@ class Coordinator:
                             "X-DiLoCo-Round": str(round_idx),
                             "X-DiLoCo-State-Hash": state_hash,
                             "X-DiLoCo-Blob-Hash": blob_hash,
+                            "X-DiLoCo-Blob-Size": str(len(blob)),
                             "Cache-Control": "no-store",
                         }
                         inm = (self.headers.get("If-None-Match", "") or "").strip()
@@ -304,6 +306,8 @@ class Coordinator:
                             self.send_header("Content-Length", "0")
                             self.end_headers()
                             return
+                        accept_wire = parse_accept_wire(self.headers.get("X-DiLoCo-Accept-Wire-Compression", ""))
+                        wire_codec = negotiate_wire_codec(coordinator.config.coordinator.wire_compression, accept_wire)
                         range_header = self.headers.get("Range", "")
                         if range_header:
                             if not range_header.startswith("bytes="):
@@ -337,9 +341,28 @@ class Coordinator:
                             chunk = blob[start : end + 1]
                             headers = dict(common_headers)
                             headers["Content-Range"] = f"bytes {start}-{end}/{len(blob)}"
+                            if wire_codec:
+                                try:
+                                    wire_chunk = compress_wire(chunk, wire_codec)
+                                    headers["X-DiLoCo-Wire-Compression"] = wire_codec
+                                    headers["X-DiLoCo-Wire-Uncompressed-Length"] = str(len(chunk))
+                                    self._send_bytes(206, wire_chunk, "application/octet-stream", extra_headers=headers)
+                                    return
+                                except Exception as exc:  # noqa: BLE001
+                                    LOG.warning("wire compression failed for state range response: %s", exc)
                             self._send_bytes(206, chunk, "application/octet-stream", extra_headers=headers)
                             return
-                        self._send_bytes(200, blob, "application/octet-stream", extra_headers=common_headers)
+                        headers = dict(common_headers)
+                        if wire_codec:
+                            try:
+                                wire_blob = compress_wire(blob, wire_codec)
+                                headers["X-DiLoCo-Wire-Compression"] = wire_codec
+                                headers["X-DiLoCo-Wire-Uncompressed-Length"] = str(len(blob))
+                                self._send_bytes(200, wire_blob, "application/octet-stream", extra_headers=headers)
+                                return
+                            except Exception as exc:  # noqa: BLE001
+                                LOG.warning("wire compression failed for state response: %s", exc)
+                        self._send_bytes(200, blob, "application/octet-stream", extra_headers=headers)
                         return
                     raise ApiError(404, f"unknown route: {route}")
                 except ApiError as exc:
@@ -374,7 +397,18 @@ class Coordinator:
                             round_id = int(query.get("round", "-1"))
                         except ValueError as exc:
                             raise ApiError(400, "invalid round") from exc
-                        body = self._read_body(coordinator.config.coordinator.max_body_bytes)
+                        wire_body = self._read_body(coordinator.config.coordinator.max_body_bytes)
+                        wire_bytes = len(wire_body)
+                        wire_codec_req = normalize_codec(
+                            self.headers.get("X-DiLoCo-Wire-Compression", "")
+                            or self.headers.get("Content-Encoding", "")
+                        )
+                        body = wire_body
+                        if wire_codec_req:
+                            try:
+                                body = decompress_wire(wire_body, wire_codec_req)
+                            except Exception as exc:
+                                raise ApiError(400, f"invalid wire-compressed body: {exc}") from exc
                         meta, tensors = unpack_state(body)
                         if int(meta.get("round", -2)) != round_id:
                             raise ApiError(400, "round mismatch between query and payload")
@@ -405,8 +439,20 @@ class Coordinator:
                             train_loss=float(meta.get("train_loss", 0.0)),
                             update_hash=hash_blob(body),
                             node_sig=str(meta.get("node_sig", "") or ""),
-                            update_bytes=len(body),
+                            update_bytes=wire_bytes,
                         )
+                        accept_wire = parse_accept_wire(self.headers.get("X-DiLoCo-Accept-Wire-Compression", ""))
+                        resp_wire_codec = negotiate_wire_codec(coordinator.config.coordinator.wire_compression, accept_wire)
+                        if resp_wire_codec:
+                            try:
+                                wire_result = compress_wire(result, resp_wire_codec)
+                                self._send_bytes(200, wire_result, "application/octet-stream", extra_headers={
+                                    "X-DiLoCo-Wire-Compression": resp_wire_codec,
+                                    "X-DiLoCo-Wire-Uncompressed-Length": str(len(result)),
+                                })
+                                return
+                            except Exception as exc:  # noqa: BLE001
+                                LOG.warning("wire compression failed for update response: %s", exc)
                         self._send_bytes(200, result, "application/octet-stream")
                         return
                     if route == "/v1/leave":
@@ -529,6 +575,8 @@ class Coordinator:
         meta["state_blob_chunk_hashes"] = list(blob_info["chunk_hashes"])
         meta["state_blob_merkle_root"] = str(blob_info["merkle_root"])
         meta["state_etag"] = str(blob_info["etag"])
+        meta["wire_compression"] = str(self.config.coordinator.wire_compression)
+        meta["wire_compression_supported"] = available_wire_codecs()
         return meta
 
     def state_meta(self) -> Dict[str, Any]:
@@ -588,6 +636,8 @@ class Coordinator:
             "done": bool(self.finished),
             "state_hash": self._state_hash,
             "registered": sorted(self.registered),
+            "wire_compression": str(self.config.coordinator.wire_compression),
+            "wire_compression_supported": available_wire_codecs(),
         }
 
     def _round_wait_seconds_locked(self) -> float:

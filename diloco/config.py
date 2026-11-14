@@ -100,6 +100,7 @@ class CoordinatorConfig:
     tls_verify: bool = True
     allowed_node_pubkeys: Tuple[str, ...] = ()
     require_node_identity: bool = False
+    wire_compression: str = "none"
 
 
 @dataclass(frozen=True)
@@ -210,6 +211,7 @@ def _coordinator_from_dict(raw: Mapping[str, Any]) -> CoordinatorConfig:
         tls_verify=bool(raw.get("tls_verify", True)),
         allowed_node_pubkeys=_tuple(raw.get("allowed_node_pubkeys"), ()),
         require_node_identity=bool(raw.get("require_node_identity", False)),
+        wire_compression=str(raw.get("wire_compression", "none")).lower(),
     )
 
 
@@ -302,6 +304,15 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError("coordinator.registration_timeout_s must be >= 0")
     if c.transport not in ("http", "grpc"):
         raise ValueError("coordinator.transport must be 'http' or 'grpc'")
+    if c.wire_compression not in ("none", "gzip", "zstd", "auto"):
+        raise ValueError("coordinator.wire_compression must be none/gzip/zstd/auto")
+    if c.wire_compression == "zstd":
+        try:
+            from .compression import zstd_available
+            if not zstd_available():
+                raise ValueError("coordinator.wire_compression='zstd' requires zstandard or Python compression.zstd support")
+        except ImportError:
+            raise ValueError("coordinator.wire_compression='zstd' requires zstd compression support")
     if c.tls_cert or c.tls_key:
         if not c.tls_cert or not c.tls_key:
             raise ValueError("tls_cert and tls_key must be provided together")
