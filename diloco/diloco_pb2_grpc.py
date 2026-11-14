@@ -49,6 +49,16 @@ class CoordinatorStub:
                 request_serializer=diloco__pb2.StateRequest.SerializeToString,
                 response_deserializer=diloco__pb2.StateResponse.FromString,
                 _registered_method=True)
+        self.GetStateMeta = channel.unary_unary(
+                '/diloco.Coordinator/GetStateMeta',
+                request_serializer=diloco__pb2.StateRequest.SerializeToString,
+                response_deserializer=diloco__pb2.StateMetaResponse.FromString,
+                _registered_method=True)
+        self.GetStateChunk = channel.unary_unary(
+                '/diloco.Coordinator/GetStateChunk',
+                request_serializer=diloco__pb2.StateChunkRequest.SerializeToString,
+                response_deserializer=diloco__pb2.StateChunkResponse.FromString,
+                _registered_method=True)
         self.Submit = channel.unary_unary(
                 '/diloco.Coordinator/Submit',
                 request_serializer=diloco__pb2.SubmitRequest.SerializeToString,
@@ -87,6 +97,18 @@ class CoordinatorServicer:
         raise NotImplementedError('Method not implemented!')
 
     def GetState(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetStateMeta(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetStateChunk(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -133,6 +155,16 @@ def add_CoordinatorServicer_to_server(servicer, server):
                     servicer.GetState,
                     request_deserializer=diloco__pb2.StateRequest.FromString,
                     response_serializer=diloco__pb2.StateResponse.SerializeToString,
+            ),
+            'GetStateMeta': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetStateMeta,
+                    request_deserializer=diloco__pb2.StateRequest.FromString,
+                    response_serializer=diloco__pb2.StateMetaResponse.SerializeToString,
+            ),
+            'GetStateChunk': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetStateChunk,
+                    request_deserializer=diloco__pb2.StateChunkRequest.FromString,
+                    response_serializer=diloco__pb2.StateChunkResponse.SerializeToString,
             ),
             'Submit': grpc.unary_unary_rpc_method_handler(
                     servicer.Submit,
@@ -236,6 +268,60 @@ class Coordinator:
             '/diloco.Coordinator/GetState',
             diloco__pb2.StateRequest.SerializeToString,
             diloco__pb2.StateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetStateMeta(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/diloco.Coordinator/GetStateMeta',
+            diloco__pb2.StateRequest.SerializeToString,
+            diloco__pb2.StateMetaResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetStateChunk(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/diloco.Coordinator/GetStateChunk',
+            diloco__pb2.StateChunkRequest.SerializeToString,
+            diloco__pb2.StateChunkResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -6,6 +6,8 @@ service Coordinator {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc GetState(StateRequest) returns (StateResponse);
+  rpc GetStateMeta(StateRequest) returns (StateMetaResponse);
+  rpc GetStateChunk(StateChunkRequest) returns (StateChunkResponse);
   rpc Submit(SubmitRequest) returns (StateResponse);
   rpc Leave(LeaveRequest) returns (LeaveResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -16,6 +18,10 @@ message RegisterRequest {
   string node_id = 1;
   string config_hash = 2;
   string base_hash = 3;
+  string node_pubkey = 4;
+  string node_sig = 5;
+  string sig_alg = 6;
+  string run_id = 7;
 }
 
 message RegisterResponse {
@@ -46,6 +52,26 @@ message StateRequest {
 
 message StateResponse {
   bytes payload = 1;
+}
+
+message StateMetaResponse {
+  string json = 1;
+}
+
+message StateChunkRequest {
+  string node_id = 1;
+  int64 offset = 2;
+  int64 length = 3;
+}
+
+message StateChunkResponse {
+  bytes data = 1;
+  int64 offset = 2;
+  int64 total_size = 3;
+  string blob_hash = 4;
+  string state_hash = 5;
+  int64 round = 6;
+  bool eof = 7;
 }
 
 message SubmitRequest {

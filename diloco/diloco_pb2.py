@@ -24,39 +24,45 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x64iloco.proto\x12\x06\x64iloco\"J\n\x0fRegisterRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x13\n\x0b\x63onfig_hash\x18\x02 \x01(\t\x12\x11\n\tbase_hash\x18\x03 \x01(\t\"\xa8\x01\n\x10RegisterResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07node_id\x18\x02 \x01(\t\x12\r\n\x05round\x18\x03 \x01(\x03\x12\x13\n\x0bglobal_step\x18\x04 \x01(\x03\x12\t\n\x01h\x18\x05 \x01(\x05\x12\x12\n\nmax_rounds\x18\x06 \x01(\x03\x12\x0c\n\x04\x64one\x18\x07 \x01(\x08\x12\x12\n\nstate_hash\x18\x08 \x01(\t\x12\x12\n\nregistered\x18\t \x03(\t\"#\n\x10HeartbeatRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\"G\n\x11HeartbeatResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\r\n\x05round\x18\x02 \x01(\x03\x12\x17\n\x0fpending_updates\x18\x03 \x01(\x05\"\x1f\n\x0cStateRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\" \n\rStateResponse\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\" \n\rSubmitRequest\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\"\x1f\n\x0cLeaveRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\",\n\rLeaveResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07removed\x18\x02 \x01(\x08\"\x0f\n\rHealthRequest\"\x1e\n\x0eHealthResponse\x12\x0c\n\x04json\x18\x01 \x01(\t\"\x0f\n\rStatusRequest\"\x1e\n\x0eStatusResponse\x12\x0c\n\x04json\x18\x01 \x01(\t2\xa7\x03\n\x0b\x43oordinator\x12=\n\x08Register\x12\x17.diloco.RegisterRequest\x1a\x18.diloco.RegisterResponse\x12@\n\tHeartbeat\x12\x18.diloco.HeartbeatRequest\x1a\x19.diloco.HeartbeatResponse\x12\x37\n\x08GetState\x12\x14.diloco.StateRequest\x1a\x15.diloco.StateResponse\x12\x36\n\x06Submit\x12\x15.diloco.SubmitRequest\x1a\x15.diloco.StateResponse\x12\x34\n\x05Leave\x12\x14.diloco.LeaveRequest\x1a\x15.diloco.LeaveResponse\x12\x37\n\x06Health\x12\x15.diloco.HealthRequest\x1a\x16.diloco.HealthResponse\x12\x37\n\x06Status\x12\x15.diloco.StatusRequest\x1a\x16.diloco.StatusResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x64iloco.proto\x12\x06\x64iloco\"\x92\x01\n\x0fRegisterRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x13\n\x0b\x63onfig_hash\x18\x02 \x01(\t\x12\x11\n\tbase_hash\x18\x03 \x01(\t\x12\x13\n\x0bnode_pubkey\x18\x04 \x01(\t\x12\x10\n\x08node_sig\x18\x05 \x01(\t\x12\x0f\n\x07sig_alg\x18\x06 \x01(\t\x12\x0e\n\x06run_id\x18\x07 \x01(\t\"\xa8\x01\n\x10RegisterResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07node_id\x18\x02 \x01(\t\x12\r\n\x05round\x18\x03 \x01(\x03\x12\x13\n\x0bglobal_step\x18\x04 \x01(\x03\x12\t\n\x01h\x18\x05 \x01(\x05\x12\x12\n\nmax_rounds\x18\x06 \x01(\x03\x12\x0c\n\x04\x64one\x18\x07 \x01(\x08\x12\x12\n\nstate_hash\x18\x08 \x01(\t\x12\x12\n\nregistered\x18\t \x03(\t\"#\n\x10HeartbeatRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\"G\n\x11HeartbeatResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\r\n\x05round\x18\x02 \x01(\x03\x12\x17\n\x0fpending_updates\x18\x03 \x01(\x05\"\x1f\n\x0cStateRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\" \n\rStateResponse\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\"!\n\x11StateMetaResponse\x12\x0c\n\x04json\x18\x01 \x01(\t\"D\n\x11StateChunkRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x0e\n\x06offset\x18\x02 \x01(\x03\x12\x0e\n\x06length\x18\x03 \x01(\x03\"\x89\x01\n\x12StateChunkResponse\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\x12\x0e\n\x06offset\x18\x02 \x01(\x03\x12\x12\n\ntotal_size\x18\x03 \x01(\x03\x12\x11\n\tblob_hash\x18\x04 \x01(\t\x12\x12\n\nstate_hash\x18\x05 \x01(\t\x12\r\n\x05round\x18\x06 \x01(\x03\x12\x0b\n\x03\x65of\x18\x07 \x01(\x08\" \n\rSubmitRequest\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\"\x1f\n\x0cLeaveRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\",\n\rLeaveResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07removed\x18\x02 \x01(\x08\"\x0f\n\rHealthRequest\"\x1e\n\x0eHealthResponse\x12\x0c\n\x04json\x18\x01 \x01(\t\"\x0f\n\rStatusRequest\"\x1e\n\x0eStatusResponse\x12\x0c\n\x04json\x18\x01 \x01(\t2\xb0\x04\n\x0b\x43oordinator\x12=\n\x08Register\x12\x17.diloco.RegisterRequest\x1a\x18.diloco.RegisterResponse\x12@\n\tHeartbeat\x12\x18.diloco.HeartbeatRequest\x1a\x19.diloco.HeartbeatResponse\x12\x37\n\x08GetState\x12\x14.diloco.StateRequest\x1a\x15.diloco.StateResponse\x12?\n\x0cGetStateMeta\x12\x14.diloco.StateRequest\x1a\x19.diloco.StateMetaResponse\x12\x46\n\rGetStateChunk\x12\x19.diloco.StateChunkRequest\x1a\x1a.diloco.StateChunkResponse\x12\x36\n\x06Submit\x12\x15.diloco.SubmitRequest\x1a\x15.diloco.StateResponse\x12\x34\n\x05Leave\x12\x14.diloco.LeaveRequest\x1a\x15.diloco.LeaveResponse\x12\x37\n\x06Health\x12\x15.diloco.HealthRequest\x1a\x16.diloco.HealthResponse\x12\x37\n\x06Status\x12\x15.diloco.StatusRequest\x1a\x16.diloco.StatusResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'diloco_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_REGISTERREQUEST']._serialized_start=24
-  _globals['_REGISTERREQUEST']._serialized_end=98
-  _globals['_REGISTERRESPONSE']._serialized_start=101
-  _globals['_REGISTERRESPONSE']._serialized_end=269
-  _globals['_HEARTBEATREQUEST']._serialized_start=271
-  _globals['_HEARTBEATREQUEST']._serialized_end=306
-  _globals['_HEARTBEATRESPONSE']._serialized_start=308
-  _globals['_HEARTBEATRESPONSE']._serialized_end=379
-  _globals['_STATEREQUEST']._serialized_start=381
-  _globals['_STATEREQUEST']._serialized_end=412
-  _globals['_STATERESPONSE']._serialized_start=414
-  _globals['_STATERESPONSE']._serialized_end=446
-  _globals['_SUBMITREQUEST']._serialized_start=448
-  _globals['_SUBMITREQUEST']._serialized_end=480
-  _globals['_LEAVEREQUEST']._serialized_start=482
-  _globals['_LEAVEREQUEST']._serialized_end=513
-  _globals['_LEAVERESPONSE']._serialized_start=515
-  _globals['_LEAVERESPONSE']._serialized_end=559
-  _globals['_HEALTHREQUEST']._serialized_start=561
-  _globals['_HEALTHREQUEST']._serialized_end=576
-  _globals['_HEALTHRESPONSE']._serialized_start=578
-  _globals['_HEALTHRESPONSE']._serialized_end=608
-  _globals['_STATUSREQUEST']._serialized_start=610
-  _globals['_STATUSREQUEST']._serialized_end=625
-  _globals['_STATUSRESPONSE']._serialized_start=627
-  _globals['_STATUSRESPONSE']._serialized_end=657
-  _globals['_COORDINATOR']._serialized_start=660
-  _globals['_COORDINATOR']._serialized_end=1083
+  _globals['_REGISTERREQUEST']._serialized_start=25
+  _globals['_REGISTERREQUEST']._serialized_end=171
+  _globals['_REGISTERRESPONSE']._serialized_start=174
+  _globals['_REGISTERRESPONSE']._serialized_end=342
+  _globals['_HEARTBEATREQUEST']._serialized_start=344
+  _globals['_HEARTBEATREQUEST']._serialized_end=379
+  _globals['_HEARTBEATRESPONSE']._serialized_start=381
+  _globals['_HEARTBEATRESPONSE']._serialized_end=452
+  _globals['_STATEREQUEST']._serialized_start=454
+  _globals['_STATEREQUEST']._serialized_end=485
+  _globals['_STATERESPONSE']._serialized_start=487
+  _globals['_STATERESPONSE']._serialized_end=519
+  _globals['_STATEMETARESPONSE']._serialized_start=521
+  _globals['_STATEMETARESPONSE']._serialized_end=554
+  _globals['_STATECHUNKREQUEST']._serialized_start=556
+  _globals['_STATECHUNKREQUEST']._serialized_end=624
+  _globals['_STATECHUNKRESPONSE']._serialized_start=627
+  _globals['_STATECHUNKRESPONSE']._serialized_end=764
+  _globals['_SUBMITREQUEST']._serialized_start=766
+  _globals['_SUBMITREQUEST']._serialized_end=798
+  _globals['_LEAVEREQUEST']._serialized_start=800
+  _globals['_LEAVEREQUEST']._serialized_end=831
+  _globals['_LEAVERESPONSE']._serialized_start=833
+  _globals['_LEAVERESPONSE']._serialized_end=877
+  _globals['_HEALTHREQUEST']._serialized_start=879
+  _globals['_HEALTHREQUEST']._serialized_end=894
+  _globals['_HEALTHRESPONSE']._serialized_start=896
+  _globals['_HEALTHRESPONSE']._serialized_end=926
+  _globals['_STATUSREQUEST']._serialized_start=928
+  _globals['_STATUSREQUEST']._serialized_end=943
+  _globals['_STATUSRESPONSE']._serialized_start=945
+  _globals['_STATUSRESPONSE']._serialized_end=975
+  _globals['_COORDINATOR']._serialized_start=978
+  _globals['_COORDINATOR']._serialized_end=1538
 # @@protoc_insertion_point(module_scope)

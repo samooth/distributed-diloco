@@ -535,6 +535,48 @@ class Coordinator:
         with self.cond:
             return self._state_meta_locked()
 
+    def get_state_meta(self, node_id: str) -> Dict[str, Any]:
+        with self.cond:
+            self._evict_stale_locked()
+            self._require_node_locked(node_id)
+            if self.failure:
+                raise ApiError(503, f"run failed: {self.failure}")
+            self.registered[node_id]["last_seen"] = time.time()
+            self.last_activity = time.time()
+            return self._state_meta_locked()
+
+    def get_state_chunk(self, node_id: str, offset: int, length: int) -> Dict[str, Any]:
+        with self.cond:
+            self._evict_stale_locked()
+            self._require_node_locked(node_id)
+            if self.failure:
+                raise ApiError(503, f"run failed: {self.failure}")
+            self.registered[node_id]["last_seen"] = time.time()
+            self.last_activity = time.time()
+            blob_info = self._ensure_state_blob_locked()
+            blob = blob_info["blob"]
+            total = len(blob)
+            off = int(offset)
+            if off < 0 or (total == 0 and off != 0) or (total > 0 and off >= total):
+                raise ApiError(416, "invalid chunk offset")
+            req_len = int(length)
+            chunk_size = int(blob_info.get("chunk_size", STATE_BLOB_CHUNK_SIZE) or STATE_BLOB_CHUNK_SIZE)
+            if req_len <= 0:
+                req_len = chunk_size
+            req_len = max(1, min(req_len, 16 * 1024 * 1024))
+            end = min(total, off + req_len)
+            data = blob[off:end] if total > 0 else b""
+            eof = end >= total
+            return {
+                "data": data,
+                "offset": int(off),
+                "total_size": int(total),
+                "blob_hash": str(blob_info["blob_hash"]),
+                "state_hash": str(blob_info["state_hash"]),
+                "round": int(blob_info["round"]),
+                "eof": bool(eof),
+            }
+
     def _registration_locked(self) -> Dict[str, Any]:
         return {
             "ok": True,

@@ -38,6 +38,7 @@ def _grpc_status(http_status: int) -> "grpc.StatusCode":
         410: grpc.StatusCode.NOT_FOUND,
         411: grpc.StatusCode.INVALID_ARGUMENT,
         413: grpc.StatusCode.RESOURCE_EXHAUSTED,
+        416: grpc.StatusCode.OUT_OF_RANGE,
         425: grpc.StatusCode.FAILED_PRECONDITION,
         429: grpc.StatusCode.RESOURCE_EXHAUSTED,
         500: grpc.StatusCode.INTERNAL,
@@ -139,6 +140,44 @@ else:
                     return
                 raise
             return pb2.StateResponse(payload=blob)
+
+        def GetStateMeta(self, request: Any, context: Any) -> Any:
+            self._authorize(context)
+            try:
+                meta = self.coordinator.get_state_meta(str(request.node_id))
+            except Exception as exc:  # noqa: BLE001
+                from .coordinator import ApiError
+
+                if isinstance(exc, ApiError):
+                    _abort(context, exc)
+                    return
+                raise
+            return pb2.StateMetaResponse(json=json.dumps(meta, sort_keys=True, default=str))
+
+        def GetStateChunk(self, request: Any, context: Any) -> Any:
+            self._authorize(context)
+            try:
+                chunk = self.coordinator.get_state_chunk(
+                    str(request.node_id),
+                    int(getattr(request, "offset", 0) or 0),
+                    int(getattr(request, "length", 0) or 0),
+                )
+            except Exception as exc:  # noqa: BLE001
+                from .coordinator import ApiError
+
+                if isinstance(exc, ApiError):
+                    _abort(context, exc)
+                    return
+                raise
+            return pb2.StateChunkResponse(
+                data=chunk["data"],
+                offset=int(chunk["offset"]),
+                total_size=int(chunk["total_size"]),
+                blob_hash=str(chunk["blob_hash"]),
+                state_hash=str(chunk["state_hash"]),
+                round=int(chunk["round"]),
+                eof=bool(chunk["eof"]),
+            )
 
         def Submit(self, request: Any, context: Any) -> Any:
             self._authorize(context)
@@ -316,48 +355,70 @@ else:
                 "pending_updates": int(response.pending_updates),
             }
 
+        def _raise_rpc_error(self, exc: "grpc.RpcError") -> None:
+            from .worker import CoordinatorError
+
+            status = {
+                grpc.StatusCode.INVALID_ARGUMENT: 400,
+                grpc.StatusCode.UNAUTHENTICATED: 401,
+                grpc.StatusCode.PERMISSION_DENIED: 403,
+                grpc.StatusCode.NOT_FOUND: 404,
+                grpc.StatusCode.FAILED_PRECONDITION: 409,
+                grpc.StatusCode.OUT_OF_RANGE: 416,
+                grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
+                grpc.StatusCode.INTERNAL: 500,
+                grpc.StatusCode.UNAVAILABLE: 503,
+                grpc.StatusCode.DEADLINE_EXCEEDED: 504,
+            }.get(exc.code(), 500)
+            raise CoordinatorError(status, exc.details() or str(exc)) from exc
+
         def get_state(self, node_id: str) -> bytes:
-            response = self.stub.GetState(pb2.StateRequest(node_id=node_id), metadata=self._metadata())
+            try:
+                response = self.stub.GetState(pb2.StateRequest(node_id=node_id), metadata=self._metadata())
+            except grpc.RpcError as exc:
+                self._raise_rpc_error(exc)
             return response.payload
+
+        def get_state_meta(self, node_id: str) -> Dict[str, Any]:
+            try:
+                response = self.stub.GetStateMeta(pb2.StateRequest(node_id=node_id), metadata=self._metadata())
+            except grpc.RpcError as exc:
+                self._raise_rpc_error(exc)
+            try:
+                return json.loads(response.json)
+            except Exception:
+                return {}
+
+        def get_state_chunk(self, node_id: str, offset: int = 0, length: int = 0) -> Dict[str, Any]:
+            try:
+                response = self.stub.GetStateChunk(
+                    pb2.StateChunkRequest(node_id=node_id, offset=int(offset), length=int(length)),
+                    metadata=self._metadata(),
+                )
+            except grpc.RpcError as exc:
+                self._raise_rpc_error(exc)
+            return {
+                "data": bytes(response.data),
+                "offset": int(response.offset),
+                "total_size": int(response.total_size),
+                "blob_hash": str(response.blob_hash),
+                "state_hash": str(response.state_hash),
+                "round": int(response.round),
+                "eof": bool(response.eof),
+            }
 
         def submit(self, payload: bytes) -> bytes:
             try:
                 response = self.stub.Submit(pb2.SubmitRequest(payload=payload), metadata=self._metadata())
             except grpc.RpcError as exc:
-                from .worker import CoordinatorError
-
-                status = {
-                    grpc.StatusCode.INVALID_ARGUMENT: 400,
-                    grpc.StatusCode.UNAUTHENTICATED: 401,
-                    grpc.StatusCode.PERMISSION_DENIED: 403,
-                    grpc.StatusCode.NOT_FOUND: 404,
-                    grpc.StatusCode.FAILED_PRECONDITION: 409,
-                    grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
-                    grpc.StatusCode.INTERNAL: 500,
-                    grpc.StatusCode.UNAVAILABLE: 503,
-                    grpc.StatusCode.DEADLINE_EXCEEDED: 504,
-                }.get(exc.code(), 500)
-                raise CoordinatorError(status, exc.details() or str(exc)) from exc
+                self._raise_rpc_error(exc)
             return response.payload
 
         def leave(self, node_id: str) -> Dict[str, Any]:
             try:
                 response = self.stub.Leave(pb2.LeaveRequest(node_id=node_id), metadata=self._metadata())
             except grpc.RpcError as exc:
-                from .worker import CoordinatorError
-
-                status = {
-                    grpc.StatusCode.INVALID_ARGUMENT: 400,
-                    grpc.StatusCode.UNAUTHENTICATED: 401,
-                    grpc.StatusCode.PERMISSION_DENIED: 403,
-                    grpc.StatusCode.NOT_FOUND: 404,
-                    grpc.StatusCode.FAILED_PRECONDITION: 409,
-                    grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
-                    grpc.StatusCode.INTERNAL: 500,
-                    grpc.StatusCode.UNAVAILABLE: 503,
-                    grpc.StatusCode.DEADLINE_EXCEEDED: 504,
-                }.get(exc.code(), 500)
-                raise CoordinatorError(status, exc.details() or str(exc)) from exc
+                self._raise_rpc_error(exc)
             return {"ok": bool(response.ok), "removed": bool(response.removed)}
 
         def close(self) -> None:

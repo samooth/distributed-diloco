@@ -1085,6 +1085,226 @@ class LocalhostSmokeTests(unittest.TestCase):
                 coord.stop()
 
 
+    def test_grpc_state_meta_includes_blob_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-grpc-state-manifest",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=1, max_workers=1, quorum=1, max_rounds=1,
+                    checkpoint_dir=tmp, token="grpc-meta-token", idle_timeout_s=0,
+                    transport="grpc",
+                ),
+            )
+            state, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+            coord = Coordinator(config, state, base_hash, adapter_meta)
+            port = coord.start()
+            backend = build_backend(config, shard_id=0, device="cpu")
+            worker = Worker(
+                config,
+                "node-grpc-meta",
+                f"grpc://127.0.0.1:{port}",
+                backend,
+                log_path=str(Path(tmp) / "grpc-meta.jsonl"),
+                grpc_target=f"127.0.0.1:{port}",
+            )
+            try:
+                worker.register()
+                client = worker._get_grpc_client()
+                self.assertIsNotNone(client)
+                assert client is not None
+                meta = client.get_state_meta("node-grpc-meta")
+                self.assertIn("state_blob_hash", meta)
+                self.assertIn("state_blob_bytes", meta)
+                self.assertIn("state_blob_chunk_size", meta)
+                self.assertIn("state_blob_chunk_hashes", meta)
+                self.assertIn("state_blob_merkle_root", meta)
+                self.assertIsInstance(meta["state_blob_chunk_hashes"], list)
+                self.assertGreater(len(meta["state_blob_chunk_hashes"]), 0)
+                self.assertEqual(int(meta["round"]), 0)
+
+                total = int(meta["state_blob_bytes"])
+                # fetch via chunk RPC and verify reassembly/hash
+                assembled = bytearray()
+                offset = 0
+                while offset < total:
+                    resp = client.get_state_chunk("node-grpc-meta", offset, max(1, min(97, total - offset)))
+                    data = bytes(resp.get("data", b""))
+                    self.assertGreater(len(data), 0)
+                    self.assertEqual(int(resp.get("offset", -1)), offset)
+                    self.assertEqual(int(resp.get("total_size", 0)), total)
+                    self.assertEqual(str(resp.get("blob_hash", "")), str(meta["state_blob_hash"]))
+                    assembled.extend(data)
+                    offset += len(data)
+                    if bool(resp.get("eof", False)):
+                        break
+                self.assertEqual(len(assembled), total)
+                self.assertEqual(hashlib_sha256(bytes(assembled)), str(meta["state_blob_hash"]))
+            finally:
+                try:
+                    worker.leave()
+                except Exception:
+                    pass
+                worker.close()
+                coord.stop()
+
+    def test_grpc_worker_chunked_manifest_download_and_cache(self):
+        import diloco.coordinator as coord_mod
+
+        old_chunk = coord_mod.STATE_BLOB_CHUNK_SIZE
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                coord_mod.STATE_BLOB_CHUNK_SIZE = 64
+                config = ExperimentConfig(
+                    run_id="unit-grpc-chunked",
+                    model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                    train=TrainConfig(H=2, batch_size=4, seed=17),
+                    data=DataConfig(num_shards=1, eval_samples=8),
+                    coordinator=CoordinatorConfig(
+                        min_workers=1, max_workers=1, quorum=1, max_rounds=1,
+                        checkpoint_dir=tmp, token="grpc-chunk-token", idle_timeout_s=0,
+                        transport="grpc",
+                    ),
+                )
+                state, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+                coord = Coordinator(config, state, base_hash, adapter_meta)
+                port = coord.start()
+                cache_dir = Path(tmp) / "grpc-state-cache"
+                backend = build_backend(config, shard_id=0, device="cpu")
+                worker = Worker(
+                    config,
+                    "node-grpc-chunk",
+                    f"grpc://127.0.0.1:{port}",
+                    backend,
+                    log_path=str(Path(tmp) / "grpc-chunk.jsonl"),
+                    grpc_target=f"127.0.0.1:{port}",
+                    state_cache_dir=str(cache_dir),
+                )
+                try:
+                    worker.register()
+                    client = worker._get_grpc_client()
+                    self.assertIsNotNone(client)
+                    assert client is not None
+                    meta = client.get_state_meta("node-grpc-chunk")
+                    self.assertGreater(len(list(meta.get("state_blob_chunk_hashes") or [])), 1)
+                    self.assertEqual(int(meta.get("state_blob_chunk_size", 0)), 64)
+
+                    # Force download path (not in-memory)
+                    mutated = {k: v + 5.0 for k, v in backend.state().items()}
+                    worker.backend.load_state(mutated)
+
+                    chunk_calls = {"count": 0}
+                    real_get_chunk = client.get_state_chunk
+
+                    def counting_get_chunk(node_id, offset=0, length=0):
+                        chunk_calls["count"] += 1
+                        return real_get_chunk(node_id, offset, length)
+
+                    client.get_state_chunk = counting_get_chunk  # type: ignore[assignment]
+
+                    fetched_meta, fetched_state = worker.get_state(download=True)
+                    self.assertEqual(str(fetched_meta.get("state_hash", "")), str(meta.get("state_hash", "")))
+                    self.assertGreater(chunk_calls["count"], 1, "expected chunked gRPC download to issue multiple chunk RPCs")
+                    self.assertTrue(list(cache_dir.glob("*.blob")), "expected disk cache to be populated after gRPC chunked download")
+
+                    # Disk cache reuse on next fetch
+                    mutated2 = {k: v + 7.0 for k, v in backend.state().items()}
+                    worker.backend.load_state(mutated2)
+                    def fail_chunk(node_id, offset=0, length=0):
+                        raise AssertionError("network chunk RPC should not be used when cache is valid")
+                    client.get_state_chunk = fail_chunk  # type: ignore[assignment]
+                    cached_meta, cached_state = worker.get_state(download=True)
+                    self.assertEqual(hash_state(cached_state), hash_state(fetched_state))
+                    self.assertEqual(str(cached_meta.get("state_hash", "")), str(fetched_meta.get("state_hash", "")))
+                finally:
+                    try:
+                        worker.leave()
+                    except Exception:
+                        pass
+                    worker.close()
+                    coord.stop()
+            finally:
+                coord_mod.STATE_BLOB_CHUNK_SIZE = old_chunk
+
+    def test_grpc_worker_chunked_download_recovers_from_transient_failures(self):
+        import diloco.coordinator as coord_mod
+
+        old_chunk = coord_mod.STATE_BLOB_CHUNK_SIZE
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                coord_mod.STATE_BLOB_CHUNK_SIZE = 48
+                config = ExperimentConfig(
+                    run_id="unit-grpc-chunk-resume",
+                    model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                    train=TrainConfig(H=2, batch_size=4, seed=19),
+                    data=DataConfig(num_shards=1, eval_samples=8),
+                    coordinator=CoordinatorConfig(
+                        min_workers=1, max_workers=1, quorum=1, max_rounds=1,
+                        checkpoint_dir=tmp, token="grpc-resume-token", idle_timeout_s=0,
+                        transport="grpc",
+                    ),
+                )
+                state, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+                coord = Coordinator(config, state, base_hash, adapter_meta)
+                port = coord.start()
+                backend = build_backend(config, shard_id=0, device="cpu")
+                worker = Worker(
+                    config,
+                    "node-grpc-resume",
+                    f"grpc://127.0.0.1:{port}",
+                    backend,
+                    log_path=str(Path(tmp) / "grpc-resume.jsonl"),
+                    grpc_target=f"127.0.0.1:{port}",
+                    state_cache_dir=str(Path(tmp) / "cache-grpc-resume"),
+                )
+                try:
+                    worker.register()
+                    client = worker._get_grpc_client()
+                    self.assertIsNotNone(client)
+                    assert client is not None
+                    expected_meta = client.get_state_meta("node-grpc-resume")
+                    self.assertGreater(len(list(expected_meta.get("state_blob_chunk_hashes") or [])), 1)
+
+                    mutated = {k: v + 9.0 for k, v in backend.state().items()}
+                    worker.backend.load_state(mutated)
+
+                    real_get_chunk = client.get_state_chunk
+                    calls = {"count": 0}
+
+                    def flaky_get_chunk(node_id, offset=0, length=0):
+                        calls["count"] += 1
+                        if calls["count"] == 1:
+                            raise CoordinatorError(503, "simulated transient gRPC chunk failure")
+                        resp = real_get_chunk(node_id, offset, length)
+                        # simulate partial delivery on first successful response
+                        if calls["count"] == 2:
+                            data = bytes(resp.get("data", b""))
+                            if len(data) > 8:
+                                resp = dict(resp)
+                                resp["data"] = data[: max(1, len(data) // 2)]
+                                resp["eof"] = False
+                        return resp
+
+                    client.get_state_chunk = flaky_get_chunk  # type: ignore[assignment]
+                    raw = worker._download_state_blob_grpc(client, expected_meta)
+                    self.assertEqual(hashlib_sha256(raw), str(expected_meta.get("state_blob_hash", "")))
+                    meta, unpacked_state = unpack_message(raw)
+                    self.assertEqual(str(meta.get("state_hash", "")), str(expected_meta.get("state_hash", "")))
+                    self.assertEqual(hash_state(unpacked_state), str(expected_meta.get("state_hash", "")))
+                    self.assertGreaterEqual(calls["count"], 3)
+                finally:
+                    try:
+                        worker.leave()
+                    except Exception:
+                        pass
+                    worker.close()
+                    coord.stop()
+            finally:
+                coord_mod.STATE_BLOB_CHUNK_SIZE = old_chunk
+
+
 def hashlib_sha256(data: bytes) -> str:
     import hashlib
     return hashlib.sha256(data).hexdigest()
