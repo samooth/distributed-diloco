@@ -126,6 +126,7 @@ class Coordinator:
         self.failure: Optional[str] = None
         self.last_result: Optional[Dict[str, Any]] = None
         self.history: List[Dict[str, Any]] = []
+        self._round_timeout_ema: Optional[float] = None
         self.store = CheckpointStore(
             config.coordinator.checkpoint_dir,
             object_store=create_object_store(
@@ -649,6 +650,26 @@ class Coordinator:
         # Nodes registered for this run but without an update submitted in the current round.
         return sorted(set(self.registered) - set(self.updates))
 
+    def _round_timeout_cap_locked(self) -> float:
+        cap = float(self.config.coordinator.round_timeout_max_s or 0.0)
+        if cap <= 0:
+            cap = float(self.config.coordinator.round_timeout_s)
+        return max(float(self.config.coordinator.round_timeout_min_s), cap)
+
+    def _effective_round_timeout_locked(self) -> float:
+        base = float(self.config.coordinator.round_timeout_s)
+        if not self.config.coordinator.round_timeout_adaptive:
+            return base
+        ema = self._round_timeout_ema
+        if ema is None or ema <= 0:
+            eff = base
+        else:
+            # add headroom for variance/stragglers while adapting to observed round times
+            eff = float(ema) * 2.5
+        min_s = float(self.config.coordinator.round_timeout_min_s)
+        max_s = self._round_timeout_cap_locked()
+        return max(min_s, min(max_s, float(eff)))
+
     def register(
         self,
         node_id: str,
@@ -821,7 +842,8 @@ class Coordinator:
             if len(self.updates) >= int(self.config.coordinator.quorum):
                 self._finalize_locked()
             elif self.round_index == round_id:
-                deadline = time.time() + float(self.config.coordinator.round_timeout_s)
+                effective_timeout = self._effective_round_timeout_locked()
+                deadline = time.time() + float(effective_timeout)
                 while (
                     self.round_index == round_id
                     and len(self.updates) < int(self.config.coordinator.quorum)
@@ -829,6 +851,26 @@ class Coordinator:
                 ):
                     remaining = deadline - time.time()
                     if remaining <= 0:
+                        have = len(self.updates)
+                        can_partial = (
+                            bool(self.config.coordinator.allow_partial_round)
+                            and have >= int(self.config.coordinator.partial_round_min_updates)
+                            and have > 0
+                            and self.round_index == round_id
+                            and not self.finished
+                        )
+                        if can_partial:
+                            waiting = self._waiting_nodes_locked()
+                            LOG.warning(
+                                "round %s partial finalize on timeout: %s/%s updates (waiting=%s, timeout=%.1fs)",
+                                self.round_index,
+                                have,
+                                self.config.coordinator.quorum,
+                                ",".join(waiting[:12]) + (f",+{len(waiting)-12}" if len(waiting) > 12 else ""),
+                                effective_timeout,
+                            )
+                            self._finalize_locked(partial=True)
+                            break
                         waiting = self._waiting_nodes_locked()
                         waiting_info = f"; waiting={','.join(waiting[:12])}" if waiting else ""
                         if waiting and len(waiting) > 12:
@@ -852,7 +894,7 @@ class Coordinator:
         if not node_id or node_id not in self.registered:
             raise ApiError(403, "node is not registered")
 
-    def _finalize_locked(self) -> None:
+    def _finalize_locked(self, partial: bool = False) -> None:
         round_id = int(self.round_index)
         self.registration_open = False
         node_ids = sorted(self.updates)
@@ -865,6 +907,8 @@ class Coordinator:
         sync_seconds = (
             time.time() - self.round_started_at if self.round_started_at is not None else 0.0
         )
+        quorum = int(self.config.coordinator.quorum)
+        effective_timeout = float(self._effective_round_timeout_locked())
         self.outer.step(mean_delta)
         self.global_state = self.outer.global_state
         self.round_index += 1
@@ -891,7 +935,19 @@ class Coordinator:
             "state_blob_bytes": state_blob_bytes,
             "state_hash": self._state_hash,
             "done": self.round_index >= int(self.config.coordinator.max_rounds),
+            "partial": bool(partial),
+            "quorum": quorum,
+            "updates_received": len(node_ids),
+            "effective_round_timeout_s": effective_timeout,
         }
+        # Adaptive timeout: update EMA from observed round sync time
+        if self.config.coordinator.round_timeout_adaptive and sync_seconds > 0:
+            alpha = 0.3
+            if self._round_timeout_ema is None:
+                self._round_timeout_ema = float(sync_seconds)
+            else:
+                self._round_timeout_ema = alpha * float(sync_seconds) + (1.0 - alpha) * float(self._round_timeout_ema)
+            metrics["adaptive_round_timeout_ema_s"] = float(self._round_timeout_ema)
         self.last_result = metrics
         self.history.append(metrics)
         try:
@@ -922,8 +978,9 @@ class Coordinator:
         self.round_started_at = None
         self.cond.notify_all()
         LOG.info(
-            "round %s done: nodes=%s loss=%.6f delta_norm=%.6f sync=%.2fs",
+            "round %s done%s: nodes=%s loss=%.6f delta_norm=%.6f sync=%.2fs",
             round_id,
+            " (partial)" if partial else "",
             ",".join(node_ids),
             weighted_loss,
             metrics["delta_norm"],
@@ -1017,6 +1074,9 @@ class Coordinator:
                     "state_blob_bytes": int(last["state_blob_bytes"]) if last.get("state_blob_bytes") is not None else None,
                     "nodes_count": len(last.get("nodes") or []),
                     "done": bool(last.get("done", False)),
+                    "partial": bool(last.get("partial", False)),
+                    "updates_received": int(last.get("updates_received", len(last.get("nodes") or []))),
+                    "quorum": int(last.get("quorum", self.config.coordinator.quorum)),
                 }
             # Sanitized recent history for public trends (no node IDs/keys/logs)
             pub_history = []
@@ -1031,6 +1091,7 @@ class Coordinator:
                     "update_bytes_total": int(item["update_bytes_total"]) if item.get("update_bytes_total") is not None else None,
                     "state_blob_bytes": int(item["state_blob_bytes"]) if item.get("state_blob_bytes") is not None else None,
                     "nodes_count": len(item.get("nodes") or []),
+                    "partial": bool(item.get("partial", False)),
                 })
             waiting_workers = max(0, len(self.registered) - len(self.updates))
             round_wait_seconds = self._round_wait_seconds_locked() if (not self.finished and len(self.updates) > 0 and len(self.updates) < int(self.config.coordinator.quorum)) else 0.0
@@ -1048,6 +1109,8 @@ class Coordinator:
                 "quorum": int(self.config.coordinator.quorum),
                 "min_workers": int(self.config.coordinator.min_workers),
                 "round_wait_seconds": float(round_wait_seconds),
+                "effective_round_timeout_s": float(self._effective_round_timeout_locked()),
+                "allow_partial_round": bool(self.config.coordinator.allow_partial_round),
                 "last_round": last_round,
                 "history": pub_history,
                 "updated_at": time.time(),
@@ -1071,6 +1134,11 @@ class Coordinator:
                 "min_workers": int(self.config.coordinator.min_workers),
                 "round_wait_seconds": float(self._round_wait_seconds_locked() if (not self.finished and self.round_started_at is not None and len(self.updates) < int(self.config.coordinator.quorum)) else 0.0),
                 "round_timeout_s": float(self.config.coordinator.round_timeout_s),
+                "effective_round_timeout_s": float(self._effective_round_timeout_locked()),
+                "round_timeout_adaptive": bool(self.config.coordinator.round_timeout_adaptive),
+                "adaptive_round_timeout_ema_s": float(self._round_timeout_ema) if self._round_timeout_ema is not None else None,
+                "allow_partial_round": bool(self.config.coordinator.allow_partial_round),
+                "partial_round_min_updates": int(self.config.coordinator.partial_round_min_updates),
                 "idle_timeout_s": float(self.config.coordinator.idle_timeout_s),
                 "registration_open": bool(self.registration_open),
                 "last_result": self.last_result,

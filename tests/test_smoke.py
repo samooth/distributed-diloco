@@ -1438,6 +1438,157 @@ class LocalhostSmokeTests(unittest.TestCase):
                 worker.close()
                 coordinator.stop()
 
+    def test_round_timeout_without_partial_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-timeout-no-partial",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=2, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=2,
+                    max_workers=2,
+                    quorum=2,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    token="unit-token",
+                    idle_timeout_s=30.0,
+                    registration_timeout_s=30.0,
+                    round_timeout_s=0.35,
+                    allow_partial_round=False,
+                ),
+            )
+            state, base_hash, meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, meta)
+            coordinator.register("node-0", config.fingerprint(), base_hash)
+            coordinator.register("node-1", config.fingerprint(), base_hash)
+            with coordinator.cond:
+                coordinator.registration_open = False
+            delta = {k: torch.zeros_like(v) for k, v in coordinator.global_state.items()}
+            errors: Dict[str, Any] = {}
+
+            def submitter() -> None:
+                try:
+                    coordinator.submit("node-0", 0, delta, 1.0, 0.5, "h")
+                except Exception as exc:  # noqa: BLE001
+                    errors["exc"] = exc
+
+            t = threading.Thread(target=submitter)
+            t.start()
+            t.join(timeout=5.0)
+            self.assertFalse(t.is_alive(), "submit thread should complete after timeout")
+            self.assertIn("exc", errors)
+            self.assertIsInstance(errors["exc"], ApiError)
+            self.assertEqual(errors["exc"].status, 504)
+            self.assertIn("timed out", str(errors["exc"]))
+            st = coordinator.status()
+            self.assertTrue(st["finished"])
+            self.assertIsNotNone(st["failure"])
+            self.assertIn("timed out", st["failure"])
+
+    def test_partial_round_finalize_on_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-partial-timeout",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=2, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=2,
+                    max_workers=2,
+                    quorum=2,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    token="unit-token",
+                    idle_timeout_s=30.0,
+                    registration_timeout_s=30.0,
+                    round_timeout_s=0.35,
+                    allow_partial_round=True,
+                    partial_round_min_updates=1,
+                ),
+            )
+            state, base_hash, meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, meta)
+            coordinator.register("node-0", config.fingerprint(), base_hash)
+            coordinator.register("node-1", config.fingerprint(), base_hash)
+            with coordinator.cond:
+                coordinator.registration_open = False
+            delta = {k: torch.zeros_like(v) for k, v in coordinator.global_state.items()}
+            result: Dict[str, Any] = {}
+            errors: Dict[str, Any] = {}
+
+            def submitter() -> None:
+                try:
+                    result["blob"] = coordinator.submit("node-0", 0, delta, 1.0, 0.5, "h")
+                except Exception as exc:  # noqa: BLE001
+                    errors["exc"] = exc
+
+            t = threading.Thread(target=submitter)
+            t.start()
+            t.join(timeout=5.0)
+            self.assertFalse(t.is_alive(), "submit thread should complete after partial finalize")
+            self.assertNotIn("exc", errors)
+            self.assertIn("blob", result)
+            self.assertIsInstance(result["blob"], (bytes, bytearray))
+            st = coordinator.status()
+            self.assertTrue(st["finished"])
+            self.assertIsNone(st["failure"])
+            self.assertEqual(len(st["history"]), 1)
+            h = st["history"][0]
+            self.assertTrue(h.get("partial"))
+            self.assertEqual(h.get("nodes"), ["node-0"])
+            self.assertEqual(int(h.get("updates_received", 0)), 1)
+            self.assertEqual(int(h.get("quorum", 0)), 2)
+            self.assertIn("effective_round_timeout_s", h)
+            ps = coordinator.public_status()
+            self.assertTrue(ps.get("allow_partial_round"))
+            self.assertTrue((ps.get("last_round") or {}).get("partial"))
+            self.assertEqual(int((ps.get("last_round") or {}).get("updates_received", 0)), 1)
+
+    def test_adaptive_round_timeout_updates_effective(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-adaptive-timeout",
+                model=ModelConfig(kind="toy", in_features=8, out_features=4, rank=2),
+                train=TrainConfig(H=2, batch_size=4),
+                data=DataConfig(num_shards=1, eval_samples=8),
+                coordinator=CoordinatorConfig(
+                    min_workers=1,
+                    max_workers=1,
+                    quorum=1,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    token="unit-token",
+                    idle_timeout_s=30.0,
+                    registration_timeout_s=30.0,
+                    round_timeout_s=5.0,
+                    round_timeout_adaptive=True,
+                    round_timeout_min_s=0.2,
+                    round_timeout_max_s=20.0,
+                ),
+            )
+            state, base_hash, meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, meta)
+            coordinator.register("node-0", config.fingerprint(), base_hash)
+            with coordinator.cond:
+                coordinator.registration_open = False
+            # before any completed round, effective timeout falls back to base
+            self.assertAlmostEqual(coordinator._effective_round_timeout_locked(), 5.0, places=6)
+            delta = {k: torch.zeros_like(v) for k, v in coordinator.global_state.items()}
+            blob = coordinator.submit("node-0", 0, delta, 1.0, 0.5, "h")
+            self.assertIsInstance(blob, (bytes, bytearray))
+            st = coordinator.status()
+            self.assertTrue(st.get("round_timeout_adaptive"))
+            self.assertIsNotNone(st.get("adaptive_round_timeout_ema_s"))
+            self.assertGreater(float(st["adaptive_round_timeout_ema_s"]), 0.0)
+            eff = float(st["effective_round_timeout_s"])
+            self.assertGreaterEqual(eff, 0.2)
+            self.assertLessEqual(eff, 20.0)
+            h = (st.get("history") or [None])[0]
+            self.assertIsNotNone(h)
+            self.assertIn("effective_round_timeout_s", h)
+            self.assertIn("adaptive_round_timeout_ema_s", h)
+
 
 def hashlib_sha256(data: bytes) -> str:
     import hashlib

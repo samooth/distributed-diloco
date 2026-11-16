@@ -101,6 +101,11 @@ class CoordinatorConfig:
     allowed_node_pubkeys: Tuple[str, ...] = ()
     require_node_identity: bool = False
     wire_compression: str = "none"
+    round_timeout_adaptive: bool = False
+    round_timeout_min_s: float = 30.0
+    round_timeout_max_s: float = 0.0
+    allow_partial_round: bool = False
+    partial_round_min_updates: int = 1
 
 
 @dataclass(frozen=True)
@@ -212,6 +217,11 @@ def _coordinator_from_dict(raw: Mapping[str, Any]) -> CoordinatorConfig:
         allowed_node_pubkeys=_tuple(raw.get("allowed_node_pubkeys"), ()),
         require_node_identity=bool(raw.get("require_node_identity", False)),
         wire_compression=str(raw.get("wire_compression", "none")).lower(),
+        round_timeout_adaptive=bool(raw.get("round_timeout_adaptive", False)),
+        round_timeout_min_s=float(raw.get("round_timeout_min_s", 30.0)),
+        round_timeout_max_s=float(raw.get("round_timeout_max_s", 0.0)),
+        allow_partial_round=bool(raw.get("allow_partial_round", False)),
+        partial_round_min_updates=int(raw.get("partial_round_min_updates", 1)),
     )
 
 
@@ -332,6 +342,16 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError("coordinator.max_rounds must be >= 0")
     if c.round_timeout_s <= 0:
         raise ValueError("coordinator.round_timeout_s must be > 0")
+    if c.round_timeout_min_s <= 0:
+        raise ValueError("coordinator.round_timeout_min_s must be > 0")
+    if c.round_timeout_max_s < 0:
+        raise ValueError("coordinator.round_timeout_max_s must be >= 0")
+    if c.round_timeout_max_s > 0 and c.round_timeout_max_s < c.round_timeout_min_s:
+        raise ValueError("coordinator.round_timeout_max_s must be >= round_timeout_min_s")
+    if c.partial_round_min_updates < 1:
+        raise ValueError("coordinator.partial_round_min_updates must be >= 1")
+    if c.partial_round_min_updates > c.quorum:
+        raise ValueError("coordinator.partial_round_min_updates must be <= quorum")
     if c.checkpoint_every < 1:
         raise ValueError("coordinator.checkpoint_every must be >= 1")
     if c.max_body_bytes < 1024:
