@@ -1288,8 +1288,9 @@ class LocalhostSmokeTests(unittest.TestCase):
                         return resp
 
                     client.get_state_chunk = flaky_get_chunk  # type: ignore[assignment]
-                    raw = worker._download_state_blob_grpc(client, expected_meta)
+                    raw, wire_bytes = worker._download_state_blob_grpc(client, expected_meta)
                     self.assertEqual(hashlib_sha256(raw), str(expected_meta.get("state_blob_hash", "")))
+                    self.assertGreaterEqual(int(wire_bytes), 0)
                     meta, unpacked_state = unpack_message(raw)
                     self.assertEqual(str(meta.get("state_hash", "")), str(expected_meta.get("state_hash", "")))
                     self.assertEqual(hash_state(unpacked_state), str(expected_meta.get("state_hash", "")))
@@ -1343,6 +1344,72 @@ class LocalhostSmokeTests(unittest.TestCase):
                 info = worker.register()
                 self.assertEqual(info.get("wire_compression"), "gzip")
                 self.assertIn("gzip", info.get("wire_compression_supported", []))
+                smeta = worker.get_state_meta()
+                self.assertEqual(smeta.get("wire_compression"), "gzip")
+                self.assertIn("gzip", smeta.get("wire_compression_supported", []))
+
+                summary = worker.run()  # re-registers idempotently and runs
+                self.assertEqual(summary["rounds_done"], 1)
+                self.assertLess(summary["final_eval_loss"], summary["initial_eval_loss"])
+                self.assertIsNone(summary.get("failure"))
+                self.assertGreater(int(summary.get("total_upload_bytes", 0)), 0)
+                self.assertGreater(int(summary.get("total_state_response_bytes", 0)), 0)
+                records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+                round_records = [r for r in records if isinstance(r, dict) and "round" in r and "upload_bytes" in r]
+                self.assertTrue(round_records)
+                for rec in round_records:
+                    self.assertIn("upload_blob_bytes", rec)
+                    self.assertIn("state_response_blob_bytes", rec)
+                    self.assertGreater(int(rec["upload_blob_bytes"]), 0)
+                    self.assertGreaterEqual(int(rec["upload_blob_bytes"]), int(rec["upload_bytes"]))
+                    self.assertGreater(int(rec["state_response_blob_bytes"]), 0)
+                    self.assertGreaterEqual(int(rec["state_response_blob_bytes"]), int(rec["state_response_bytes"]))
+            finally:
+                try:
+                    worker.leave()
+                except Exception:
+                    pass
+                worker.close()
+                coordinator.stop()
+
+    def test_grpc_wire_compression_gzip_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-grpc-wire-gzip",
+                model=ModelConfig(kind="toy", in_features=16, out_features=8, rank=4, alpha=4.0),
+                train=TrainConfig(H=5, inner_lr=0.05, batch_size=8, seed=42),
+                data=DataConfig(num_shards=1, eval_samples=32, eval_every=1),
+                coordinator=CoordinatorConfig(
+                    host="127.0.0.1",
+                    port=0,
+                    min_workers=1,
+                    max_workers=1,
+                    quorum=1,
+                    round_timeout_s=20.0,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    checkpoint_every=1,
+                    token="grpc-wire-token",
+                    idle_timeout_s=30.0,
+                    transport="grpc",
+                    wire_compression="gzip",
+                ),
+            )
+            state, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, adapter_meta)
+            port = coordinator.start()
+            backend = build_backend(config, shard_id=0, device="cpu")
+            log_path = Path(tmp) / "grpc-wire-node.jsonl"
+            worker = Worker(
+                config,
+                "node-grpc-wire",
+                f"grpc://127.0.0.1:{port}",
+                backend,
+                log_path=str(log_path),
+                grpc_target=f"127.0.0.1:{port}",
+            )
+            try:
+                worker.register()
                 smeta = worker.get_state_meta()
                 self.assertEqual(smeta.get("wire_compression"), "gzip")
                 self.assertIn("gzip", smeta.get("wire_compression_supported", []))

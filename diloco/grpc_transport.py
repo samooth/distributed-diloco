@@ -24,8 +24,9 @@ except ImportError:
 
 from .compression import decompress_state
 from .config import ExperimentConfig
-from .protocol import unpack_state
+from .protocol import hash_blob, unpack_state
 from .tensor_utils import clone_state, ensure_finite
+from .wire import available_wire_codecs, compress_wire, decompress_wire, negotiate_wire_codec, normalize_codec, parse_accept_wire
 
 
 def _grpc_status(http_status: int) -> "grpc.StatusCode":
@@ -79,6 +80,47 @@ else:
             received = _metadata(context).get("x-diloco-token", "")
             if not hmac.compare_digest(str(received), str(expected)):
                 context.abort(grpc.StatusCode.UNAUTHENTICATED, "invalid coordinator token")
+
+        def _response_wire_codec(self, context: Any) -> str:
+            pref = str(self.coordinator.config.coordinator.wire_compression or "none")
+            if not pref or pref == "none":
+                return ""
+            md = _metadata(context)
+            accepted = parse_accept_wire(md.get("x-diloco-accept-wire-compression", ""))
+            return negotiate_wire_codec(pref, accepted)
+
+        def _request_wire_codec(self, context: Any) -> str:
+            md = _metadata(context)
+            return normalize_codec(md.get("x-diloco-wire-compression", ""))
+
+        def _compress_response(self, data: bytes, context: Any, codec: str = "") -> bytes:
+            codec = codec or self._response_wire_codec(context)
+            if not codec or not data:
+                return data
+            try:
+                wire = compress_wire(data, codec)
+            except Exception:
+                return data
+            try:
+                context.send_initial_metadata((
+                    ("x-diloco-wire-compression", codec),
+                    ("x-diloco-wire-uncompressed-size", str(len(data))),
+                    ("x-diloco-wire-bytes", str(len(wire))),
+                ))
+            except Exception:
+                # metadata may already have been sent; fall back to uncompressed
+                return data
+            return wire
+
+        def _decompress_request_payload(self, payload: bytes, context: Any) -> tuple[bytes, int]:
+            wire_bytes = len(payload)
+            codec = self._request_wire_codec(context)
+            if not codec:
+                return payload, wire_bytes
+            try:
+                return decompress_wire(payload, codec), wire_bytes
+            except Exception as exc:  # noqa: BLE001
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"invalid wire-compressed payload: {exc}")
 
         def Register(self, request: Any, context: Any) -> Any:
             self._authorize(context)
@@ -139,7 +181,8 @@ else:
                     _abort(context, exc)
                     return
                 raise
-            return pb2.StateResponse(payload=blob)
+            wire_blob = self._compress_response(blob, context)
+            return pb2.StateResponse(payload=wire_blob)
 
         def GetStateMeta(self, request: Any, context: Any) -> Any:
             self._authorize(context)
@@ -169,8 +212,10 @@ else:
                     _abort(context, exc)
                     return
                 raise
+            data = bytes(chunk["data"])
+            wire_data = self._compress_response(data, context)
             return pb2.StateChunkResponse(
-                data=chunk["data"],
+                data=wire_data,
                 offset=int(chunk["offset"]),
                 total_size=int(chunk["total_size"]),
                 blob_hash=str(chunk["blob_hash"]),
@@ -181,8 +226,13 @@ else:
 
         def Submit(self, request: Any, context: Any) -> Any:
             self._authorize(context)
+            raw_payload = bytes(request.payload)
             try:
-                meta, tensors = unpack_state(request.payload)
+                payload, wire_bytes = self._decompress_request_payload(raw_payload, context)
+            except Exception:
+                return
+            try:
+                meta, tensors = unpack_state(payload)
             except Exception as exc:  # noqa: BLE001
                 context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"invalid message: {exc}")
             node_id = str(meta.get("node_id", ""))
@@ -216,9 +266,9 @@ else:
                     delta=delta,
                     weight=float(meta.get("weight", 1.0)),
                     train_loss=float(meta.get("train_loss", 0.0)),
-                    update_hash="grpc",
+                    update_hash=hash_blob(payload),
                     node_sig=str(meta.get("node_sig", "") or ""),
-                    update_bytes=len(request.payload),
+                    update_bytes=int(wire_bytes),
                 )
             except Exception as exc:  # noqa: BLE001
                 from .coordinator import ApiError
@@ -229,7 +279,8 @@ else:
                 raise
             except ValueError as exc:
                 context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
-            return pb2.StateResponse(payload=result)
+            wire_result = self._compress_response(result, context)
+            return pb2.StateResponse(payload=wire_result)
 
         def Leave(self, request: Any, context: Any) -> Any:
             self._authorize(context)
@@ -281,9 +332,11 @@ else:
             tls_key: str = "",
             tls_client_ca: str = "",
             tls_verify: bool = True,
+            wire_compression: str = "none",
         ) -> None:
             self.target = target
             self.token = token
+            self.wire_compression = str(wire_compression or "none").lower()
             if not tls_verify:
                 self.channel = grpc.insecure_channel(target)
             elif tls_cert and tls_key:
@@ -301,10 +354,59 @@ else:
                 self.channel = grpc.insecure_channel(target)
             self.stub = pb2_grpc.CoordinatorStub(self.channel)
 
-        def _metadata(self) -> tuple[tuple[str, str], ...] | None:
-            if not self.token:
-                return None
-            return (("x-diloco-token", self.token),)
+        def _wire_accept(self) -> str:
+            return ",".join(available_wire_codecs())
+
+        def _submit_wire_codec(self) -> str:
+            pref = normalize_codec(self.wire_compression)
+            if not pref or pref == "none":
+                return ""
+            if pref == "auto":
+                codecs = available_wire_codecs()
+                return codecs[0] if codecs else ""
+            return pref if pref in available_wire_codecs() else ""
+
+        def _metadata(self, extra: Optional[Dict[str, str]] = None, include_accept: bool = True) -> tuple[tuple[str, str], ...] | None:
+            md: list[tuple[str, str]] = []
+            if self.token:
+                md.append(("x-diloco-token", self.token))
+            if include_accept:
+                acc = self._wire_accept()
+                if acc:
+                    md.append(("x-diloco-accept-wire-compression", acc))
+            if extra:
+                for k, v in extra.items():
+                    if v is None or v == "":
+                        continue
+                    md.append((str(k), str(v)))
+            return tuple(md) if md else None
+
+        def _response_meta(self, call: Any) -> Dict[str, str]:
+            out: Dict[str, str] = {}
+            try:
+                for k, v in (call.initial_metadata() or []):
+                    out[str(k).lower()] = str(v)
+            except Exception:
+                pass
+            try:
+                for k, v in (call.trailing_metadata() or []):
+                    out[str(k).lower()] = str(v)
+            except Exception:
+                pass
+            return out
+
+        def _decompress_if_needed(self, payload: bytes, call: Any) -> tuple[bytes, int, int]:
+            raw = bytes(payload)
+            wire_bytes = len(raw)
+            md = self._response_meta(call)
+            codec = normalize_codec(md.get("x-diloco-wire-compression", ""))
+            if codec:
+                try:
+                    out = decompress_wire(raw, codec)
+                    return out, wire_bytes, len(out)
+                except Exception:
+                    return raw, wire_bytes, len(raw)
+            return raw, wire_bytes, len(raw)
 
         def register(
             self,
@@ -372,16 +474,23 @@ else:
             }.get(exc.code(), 500)
             raise CoordinatorError(status, exc.details() or str(exc)) from exc
 
-        def get_state(self, node_id: str) -> bytes:
+        def get_state(self, node_id: str) -> tuple[bytes, int]:
             try:
-                response = self.stub.GetState(pb2.StateRequest(node_id=node_id), metadata=self._metadata())
+                response, call = self.stub.GetState.with_call(
+                    pb2.StateRequest(node_id=node_id),
+                    metadata=self._metadata(),
+                )
             except grpc.RpcError as exc:
                 self._raise_rpc_error(exc)
-            return response.payload
+            blob, wire_bytes, _ = self._decompress_if_needed(response.payload, call)
+            return blob, int(wire_bytes)
 
         def get_state_meta(self, node_id: str) -> Dict[str, Any]:
             try:
-                response = self.stub.GetStateMeta(pb2.StateRequest(node_id=node_id), metadata=self._metadata())
+                response = self.stub.GetStateMeta(
+                    pb2.StateRequest(node_id=node_id),
+                    metadata=self._metadata(include_accept=False),
+                )
             except grpc.RpcError as exc:
                 self._raise_rpc_error(exc)
             try:
@@ -391,28 +500,45 @@ else:
 
         def get_state_chunk(self, node_id: str, offset: int = 0, length: int = 0) -> Dict[str, Any]:
             try:
-                response = self.stub.GetStateChunk(
+                response, call = self.stub.GetStateChunk.with_call(
                     pb2.StateChunkRequest(node_id=node_id, offset=int(offset), length=int(length)),
                     metadata=self._metadata(),
                 )
             except grpc.RpcError as exc:
                 self._raise_rpc_error(exc)
+            data, wire_bytes, _ = self._decompress_if_needed(response.data, call)
             return {
-                "data": bytes(response.data),
+                "data": bytes(data),
                 "offset": int(response.offset),
                 "total_size": int(response.total_size),
                 "blob_hash": str(response.blob_hash),
                 "state_hash": str(response.state_hash),
                 "round": int(response.round),
                 "eof": bool(response.eof),
+                "wire_bytes": int(wire_bytes),
             }
 
-        def submit(self, payload: bytes) -> bytes:
+        def submit(self, payload: bytes) -> tuple[bytes, int, int]:
+            codec = self._submit_wire_codec()
+            wire_payload = bytes(payload)
+            extra: Dict[str, str] = {}
+            if codec:
+                try:
+                    wire_payload = compress_wire(wire_payload, codec)
+                    extra["x-diloco-wire-compression"] = codec
+                except Exception:
+                    wire_payload = bytes(payload)
+                    extra = {}
+            req_wire = len(wire_payload)
             try:
-                response = self.stub.Submit(pb2.SubmitRequest(payload=payload), metadata=self._metadata())
+                response, call = self.stub.Submit.with_call(
+                    pb2.SubmitRequest(payload=wire_payload),
+                    metadata=self._metadata(extra=extra or None),
+                )
             except grpc.RpcError as exc:
                 self._raise_rpc_error(exc)
-            return response.payload
+            blob, resp_wire, _ = self._decompress_if_needed(response.payload, call)
+            return blob, int(resp_wire), int(req_wire)
 
         def leave(self, node_id: str) -> Dict[str, Any]:
             try:

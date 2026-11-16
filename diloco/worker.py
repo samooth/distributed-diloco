@@ -151,6 +151,7 @@ class Worker:
                 tls_key=self.config.coordinator.tls_key,
                 tls_client_ca=self.config.coordinator.tls_client_ca,
                 tls_verify=self.config.coordinator.tls_verify,
+                wire_compression=self.config.coordinator.wire_compression,
             )
         return self._grpc
 
@@ -440,8 +441,9 @@ class Worker:
             raise CoordinatorError(0, "state blob hash/manifest mismatch after resumable download")
         return blob, total_wire_bytes
 
-    def _download_state_blob_grpc(self, client: Any, expected_meta: Optional[Mapping[str, Any]] = None) -> bytes:
-        """Download state via gRPC chunk RPC with manifest verification, resume-from-offset and state-change restart."""
+    def _download_state_blob_grpc(self, client: Any, expected_meta: Optional[Mapping[str, Any]] = None) -> tuple[bytes, int]:
+        """Download state via gRPC chunk RPC with manifest verification, resume-from-offset and state-change restart.
+        Returns (uncompressed_blob, wire_bytes_downloaded)."""
         expected_meta = dict(expected_meta or {})
         expected_hash = str(expected_meta.get("state_blob_hash", "") or "")
         expected_size = int(expected_meta.get("state_blob_bytes", 0) or 0)
@@ -450,11 +452,19 @@ class Worker:
         manifest_chunk_size = int(expected_meta.get("state_blob_chunk_size", 0) or 0)
         manifest_hashes = [str(h) for h in list(expected_meta.get("state_blob_chunk_hashes") or [])]
 
+        def _get_state_full() -> tuple[bytes, int]:
+            res = client.get_state(self.node_id)
+            if isinstance(res, tuple):
+                raw, wire = res[0], int(res[1]) if len(res) > 1 else len(res[0])
+            else:
+                raw, wire = res, len(res)
+            return bytes(raw), int(wire)
+
         if not hasattr(client, "get_state_chunk"):
-            raw = client.get_state(self.node_id)
+            raw, wire = _get_state_full()
             if not self._verify_state_blob(raw, expected_hash, manifest_hashes, manifest_chunk_size):
                 raise CoordinatorError(0, "state blob hash/manifest mismatch")
-            return raw
+            return raw, wire
 
         # Small/unknown blobs: try chunk RPC once (or full state fallback) for compatibility
         if expected_size <= 0 or (expected_size <= 8 * 1024 * 1024 and not manifest_hashes):
@@ -462,30 +472,52 @@ class Worker:
                 resp = client.get_state_chunk(self.node_id, 0, 0)
                 total = int(resp.get("total_size", 0) or 0)
                 data = bytes(resp.get("data", b"") or b"")
+                wire = int(resp.get("wire_bytes", len(data)) or len(data))
                 if total > 0 and len(data) == total:
                     blob = data
+                    blob_wire = wire
                 elif total > 0 and len(data) < total:
                     # fetch remaining via chunk loop
                     expected_size = total
+                    blob = None  # type: ignore[assignment]
+                    blob_wire = 0
                 else:
                     blob = data
-                if expected_size <= 0 or (len(data) == total and total > 0):
-                    if not self._verify_state_blob(blob if 'blob' in locals() else data, expected_hash or str(resp.get("blob_hash", "")), manifest_hashes, manifest_chunk_size):
+                    blob_wire = wire
+                if expected_size <= 0 or (blob is not None and total > 0 and len(blob) == total):
+                    out_blob = blob if blob is not None else data
+                    out_wire = blob_wire if blob is not None else wire
+                    if not self._verify_state_blob(out_blob, expected_hash or str(resp.get("blob_hash", "")), manifest_hashes, manifest_chunk_size):
                         raise CoordinatorError(0, "state blob hash/manifest mismatch")
-                    return blob if 'blob' in locals() else data
+                    return out_blob, int(out_wire)
+                # fall through to chunk loop with initial data already fetched
+                if total > 0 and len(data) < total and (expected_size > 0):
+                    # seed loop state
+                    initial_buf = bytearray(data)
+                    initial_wire = int(wire)
+                    initial_offset = len(data)
+                    # handled below by special bootstrap
+                else:
+                    initial_buf = None  # type: ignore[assignment]
+                    initial_wire = 0
+                    initial_offset = 0
             except CoordinatorError as exc:
                 # Older/unimplemented servers: fall back to full GetState
                 if exc.status in (404, 500, 501):
-                    raw = client.get_state(self.node_id)
+                    raw, wire = _get_state_full()
                     if not self._verify_state_blob(raw, expected_hash, manifest_hashes, manifest_chunk_size):
                         raise CoordinatorError(0, "state blob hash/manifest mismatch")
-                    return raw
+                    return raw, wire
                 raise
             except Exception:
-                raw = client.get_state(self.node_id)
+                raw, wire = _get_state_full()
                 if not self._verify_state_blob(raw, expected_hash, manifest_hashes, manifest_chunk_size):
                     raise CoordinatorError(0, "state blob hash/manifest mismatch")
-                return raw
+                return raw, wire
+        else:
+            initial_buf = None  # type: ignore[assignment]
+            initial_wire = 0
+            initial_offset = 0
 
         chunk_size = manifest_chunk_size if manifest_chunk_size > 0 else 8 * 1024 * 1024
         if chunk_size <= 0:
@@ -504,9 +536,16 @@ class Worker:
                     return True
             return False
 
-        buf = bytearray()
-        offset = 0
-        attempts = 0
+        if 'initial_buf' in locals() and initial_buf is not None:  # type: ignore[possibly-undefined]
+            buf = initial_buf  # type: ignore[assignment]
+            total_wire_bytes = int(initial_wire)  # type: ignore[arg-type]
+            offset = int(initial_offset)  # type: ignore[arg-type]
+            attempts = 0
+        else:
+            buf = bytearray()
+            offset = 0
+            attempts = 0
+            total_wire_bytes = 0
         max_attempts = 30
         restart_count = 0
         unsupported_fallback = False
@@ -520,14 +559,15 @@ class Worker:
                 if exc.status in (404, 500, 501) and offset == 0 and not unsupported_fallback:
                     unsupported_fallback = True
                     LOG.info("%s gRPC chunk RPC unavailable (%s), falling back to full GetState", self.node_id, exc.status)
-                    raw = client.get_state(self.node_id)
+                    raw, wire = _get_state_full()
                     if not self._verify_state_blob(raw, expected_hash, manifest_hashes, manifest_chunk_size):
                         raise CoordinatorError(0, "state blob hash/manifest mismatch") from exc
-                    return raw
+                    return raw, wire
                 if exc.status == 416 and restart_count < 2:
                     LOG.warning("%s gRPC chunk offset not satisfiable at %s, restarting state download", self.node_id, offset)
                     buf.clear()
                     offset = 0
+                    total_wire_bytes = 0
                     restart_count += 1
                     continue
                 LOG.warning("%s gRPC state chunk download failed (attempt %s): %s", self.node_id, attempts, exc)
@@ -541,6 +581,7 @@ class Worker:
 
             data = bytes(resp.get("data", b"") or b"")
             resp_total = int(resp.get("total_size", 0) or 0)
+            chunk_wire = int(resp.get("wire_bytes", len(data)) or len(data))
             if resp_total > 0 and expected_size > 0 and resp_total != expected_size:
                 # size changed; treat as state change
                 changed = True
@@ -551,6 +592,7 @@ class Worker:
                     LOG.warning("%s coordinator state changed during gRPC download, restarting", self.node_id)
                     buf.clear()
                     offset = 0
+                    total_wire_bytes = 0
                     restart_count += 1
                     try:
                         fresh = client.get_state_meta(self.node_id) if hasattr(client, "get_state_meta") else None
@@ -577,6 +619,7 @@ class Worker:
                 expected_size = resp_total
 
             buf.extend(data)
+            total_wire_bytes += int(chunk_wire)
             new_offset = offset + len(data)
             if manifest_hashes and manifest_chunk_size > 0:
                 verified_chunks = len(buf) // manifest_chunk_size
@@ -593,6 +636,7 @@ class Worker:
                         LOG.warning("%s gRPC chunk hash mismatch at index %s, retrying chunk", self.node_id, idx)
                         del buf[cstart:]
                         new_offset = cstart
+                        total_wire_bytes = 0  # conservative reset; retry from chunk start
                         attempts += 1
                         data = b""
                         break
@@ -608,7 +652,7 @@ class Worker:
         blob = bytes(buf[:expected_size] if expected_size > 0 else bytes(buf))
         if not self._verify_state_blob(blob, expected_hash, manifest_hashes, manifest_chunk_size):
             raise CoordinatorError(0, "state blob hash/manifest mismatch after resumable gRPC download")
-        return blob
+        return blob, int(total_wire_bytes)
 
     def register(self) -> Dict[str, Any]:
         pubkey = str((self.node_identity or {}).get("pubkey", "")).strip()
@@ -901,16 +945,20 @@ class Worker:
                     return meta, clone_state(state)
             # Prefer chunked/manifest-verified download for parity with HTTP (falls back to full GetState)
             try:
-                raw = self._download_state_blob_grpc(client, expected_meta)
+                raw, wire_bytes = self._download_state_blob_grpc(client, expected_meta)
             except Exception:
-                raw = client.get_state(self.node_id)
+                res = client.get_state(self.node_id)
+                if isinstance(res, tuple):
+                    raw, wire_bytes = res[0], int(res[1]) if len(res) > 1 else len(res[0])
+                else:
+                    raw, wire_bytes = res, len(res)
             meta, state = unpack_message(raw)
             self._validate_state(meta, state)
             state_hash = str(meta.get("state_hash", "") or "")
             if state_hash:
                 blob_hash = str((expected_meta or {}).get("state_blob_hash", "") or hash_blob(raw))
                 self._save_cached_state_blob(state_hash, raw, blob_hash, meta.get("round"))
-            self._last_state_fetch = {"source": "grpc", "bytes": len(raw), "seconds": round(time.time() - fetch_t0, 6)}
+            self._last_state_fetch = {"source": "grpc", "bytes": int(wire_bytes), "blob_bytes": len(raw), "seconds": round(time.time() - fetch_t0, 6)}
             return meta, clone_state(state)
 
         # HTTP: try resumable/chunked download when blob metadata is available
@@ -1112,8 +1160,15 @@ class Worker:
                 blob = pack_message(payload_meta, upload_state)
                 upload_wire_bytes = len(blob)
                 try:
-                    raw = client.submit(blob)
-                    state_response_wire_bytes = len(raw)
+                    submit_res = client.submit(blob)
+                    if isinstance(submit_res, tuple):
+                        raw = submit_res[0]
+                        state_response_wire_bytes = int(submit_res[1]) if len(submit_res) > 1 else len(raw)
+                        if len(submit_res) > 2:
+                            upload_wire_bytes = int(submit_res[2])
+                    else:
+                        raw = submit_res
+                        state_response_wire_bytes = len(raw)
                 except Exception as exc:  # noqa: BLE001
                     if grpc is not None and isinstance(exc, grpc.RpcError):
                         status = {
