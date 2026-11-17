@@ -1100,16 +1100,27 @@ class Coordinator:
                 self.round_index % int(self.config.coordinator.checkpoint_every) == 0
                 or metrics["done"]
             ):
-                self.store.save(
-                    round_index=self.round_index,
-                    global_step=self.global_step,
-                    state=self.global_state,
-                    outer_state=self.outer.state_dict(),
-                    config_hash=self.config.fingerprint(),
-                    base_hash=self.base_hash,
-                    metrics=metrics,
-                    adapter_meta=self.adapter_meta,
-                )
+                save_kwargs = {
+                    "round_index": self.round_index,
+                    "global_step": self.global_step,
+                    "state": self.global_state,
+                    "outer_state": self.outer.state_dict(),
+                    "config_hash": self.config.fingerprint(),
+                    "base_hash": self.base_hash,
+                    "metrics": metrics,
+                    "adapter_meta": self.adapter_meta,
+                }
+                try:
+                    self.store.save(**save_kwargs)
+                except FileExistsError:
+                    # A restarted coordinator may re-run rounds against a checkpoint
+                    # dir left by the previous process. Overwrite stale checkpoints
+                    # instead of failing the whole run (P2.3 restart recovery).
+                    LOG.warning(
+                        "checkpoint for round %s already exists; overwriting after restart",
+                        self.round_index,
+                    )
+                    self.store.save(overwrite=True, **save_kwargs)
         except Exception as exc:  # noqa: BLE001
             self.failure = f"checkpoint failed: {exc}"
             self.finished = True
