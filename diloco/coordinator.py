@@ -365,6 +365,54 @@ class Coordinator:
                                 LOG.warning("wire compression failed for state response: %s", exc)
                         self._send_bytes(200, blob, "application/octet-stream", extra_headers=headers)
                         return
+                    if route == "/v1/checkpoint_meta":
+                        round_id = int(self._query().get("round", "0") or 0)
+                        self._send_json(200, coordinator.checkpoint_meta(round_id))
+                        return
+                    if route == "/v1/checkpoint_file":
+                        query = self._query()
+                        round_id = int(query.get("round", "0") or 0)
+                        name = str(query.get("name", "") or "")
+                        info = coordinator.checkpoint_file(
+                            round_id,
+                            name,
+                            offset=int(query.get("offset", "0") or 0),
+                            length=int(query.get("length", "0") or 0),
+                        )
+                        chunk = bytes(info["data"])
+                        total = int(info["total_size"])
+                        off = int(info["offset"])
+                        end = off + len(chunk) - 1
+                        common = {
+                            "ETag": f'"{info["sha256"]}"',
+                            "X-DiLoCo-Checkpoint-Round": str(info["round"]),
+                            "X-DiLoCo-Checkpoint-File": str(info["name"]),
+                            "X-DiLoCo-Checkpoint-SHA256": str(info["sha256"]),
+                            "X-DiLoCo-Checkpoint-Size": str(total),
+                            "Accept-Ranges": "bytes",
+                            "Cache-Control": "no-store",
+                        }
+                        inm = (self.headers.get("If-None-Match", "") or "").strip()
+                        if inm and inm == common["ETag"]:
+                            self.send_response(304)
+                            self.send_header("ETag", common["ETag"])
+                            self.send_header("Content-Length", "0")
+                            self.end_headers()
+                            return
+                        common["Content-Range"] = f"bytes {off}-{end}/{total}"
+                        accept_wire = parse_accept_wire(self.headers.get("X-DiLoCo-Accept-Wire-Compression", ""))
+                        wire_codec = negotiate_wire_codec(coordinator.config.coordinator.wire_compression, accept_wire)
+                        if wire_codec:
+                            try:
+                                wire_chunk = compress_wire(chunk, wire_codec)
+                                common["X-DiLoCo-Wire-Compression"] = wire_codec
+                                common["X-DiLoCo-Wire-Uncompressed-Length"] = str(len(chunk))
+                                self._send_bytes(206, wire_chunk, "application/octet-stream", extra_headers=common)
+                                return
+                            except Exception as exc:  # noqa: BLE001
+                                LOG.warning("wire compression failed for checkpoint range: %s", exc)
+                        self._send_bytes(206, chunk, "application/octet-stream", extra_headers=common)
+                        return
                     raise ApiError(404, f"unknown route: {route}")
                 except ApiError as exc:
                     self._send_json(exc.status, {"error": exc.message})
@@ -625,6 +673,95 @@ class Coordinator:
                 "state_hash": str(blob_info["state_hash"]),
                 "round": int(blob_info["round"]),
                 "eof": bool(eof),
+            }
+
+    # ------------------------------------------------------ checkpoint artifacts
+    def _checkpoint_dir_locked(self, round_id: int) -> Any:
+        """Resolve a checkpoint directory by round (or latest when round <= 0)."""
+        if int(round_id) > 0:
+            path = self.store._checkpoint_path(int(round_id))
+            if not path.is_dir():
+                raise ApiError(404, f"checkpoint {round_id} not found")
+            return path
+        latest = self.store.latest_round()
+        if latest is None:
+            raise ApiError(404, "no checkpoints available")
+        return self.store._checkpoint_path(int(latest))
+
+    def _checkpoint_manifest_locked(self, round_id: int) -> Dict[str, Any]:
+        path = self._checkpoint_dir_locked(round_id)
+        names = ["adapter.safetensors", "outer.safetensors", "meta.json"]
+        files = []
+        for name in names:
+            fp = path / name
+            if not fp.is_file():
+                raise ApiError(404, f"checkpoint file missing: {name}")
+            size = int(fp.stat().st_size)
+            file_bytes = fp.read_bytes()
+            digest = _sha256_hex(file_bytes)
+            chunk_hashes = _blob_chunk_hashes(file_bytes, STATE_BLOB_CHUNK_SIZE)
+            files.append({
+                "name": name,
+                "size": size,
+                "sha256": digest,
+                "chunk_size": int(STATE_BLOB_CHUNK_SIZE),
+                "chunk_hashes": chunk_hashes,
+                "merkle_root": _merkle_root_hex(chunk_hashes),
+            })
+        meta_path = path / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            meta = {}
+        return {
+            "round": int(meta.get("round", round_id)),
+            "global_step": int(meta.get("global_step", 0)),
+            "state_hash": str(meta.get("state_hash", "") or self._state_hash),
+            "base_hash": str(meta.get("base_hash", "") or self.base_hash),
+            "config_hash": str(meta.get("config_hash", "") or self.config.fingerprint()),
+            "checkpoint_dir": str(path),
+            "files": files,
+            "wire_compression": str(self.config.coordinator.wire_compression),
+            "wire_compression_supported": available_wire_codecs(),
+        }
+
+    def checkpoint_meta(self, round_id: int = 0) -> Dict[str, Any]:
+        with self.cond:
+            return self._checkpoint_manifest_locked(round_id)
+
+    def checkpoint_file(
+        self,
+        round_id: int,
+        name: str,
+        offset: int = 0,
+        length: int = 0,
+    ) -> Dict[str, Any]:
+        allowed = {"adapter.safetensors", "outer.safetensors", "meta.json"}
+        if name not in allowed:
+            raise ApiError(400, "invalid checkpoint file name")
+        with self.cond:
+            path = self._checkpoint_dir_locked(round_id)
+            fp = path / name
+            if not fp.is_file():
+                raise ApiError(404, f"checkpoint file missing: {name}")
+            data = fp.read_bytes()
+            total = len(data)
+            off = int(offset)
+            if off < 0 or (total == 0 and off != 0) or (total > 0 and off >= total):
+                raise ApiError(416, "invalid chunk offset")
+            req_len = int(length)
+            if req_len <= 0:
+                req_len = STATE_BLOB_CHUNK_SIZE
+            req_len = max(1, min(req_len, 16 * 1024 * 1024))
+            end = min(total, off + req_len)
+            return {
+                "data": data[off:end],
+                "offset": off,
+                "total_size": total,
+                "sha256": _sha256_hex(data),
+                "round": int(round_id),
+                "name": name,
+                "eof": end >= total,
             }
 
     def _registration_locked(self) -> Dict[str, Any]:
