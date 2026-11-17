@@ -282,7 +282,7 @@ async function tunnelServer() {
 
     const node = new DHT({ ephemeral: true })
     await node.ready()
-    const listeners = new Map() // peerPub -> { key, server }
+    const listeners = new Map() // peerPub -> { key, server, conns:Set }
 
     async function addPeerListener(peerPub) {
       const p = String(peerPub || '').trim()
@@ -295,7 +295,9 @@ async function tunnelServer() {
             return !remotePublicKey.equals(keyPair.publicKey)
           }
         })
+        const conns = new Set()
         server.on('connection', (conn) => {
+          conns.add(conn)
           let mux
           mux = createMux(conn, (sid) => {
             const target = net.connect(targetPort, targetHost)
@@ -305,10 +307,10 @@ async function tunnelServer() {
           })
           console.log(JSON.stringify({ event: 'peer-connected', mode: 'tunnel-server-id', peer: p }))
           conn.on('error', (e) => console.error('tunnel-server-id peer error', e.message))
-          conn.on('close', () => console.log(JSON.stringify({ event: 'peer-disconnected', mode: 'tunnel-server-id', peer: p })))
+          conn.on('close', () => { conns.delete(conn); console.log(JSON.stringify({ event: 'peer-disconnected', mode: 'tunnel-server-id', peer: p })) })
         })
         await server.listen(keyPair)
-        listeners.set(p, { key, server })
+        listeners.set(p, { key, server, conns })
         console.log(JSON.stringify({ event: 'peer-listener-added', mode: 'tunnel-server-id', peer: p }))
         return true
       } catch (e) {
@@ -322,8 +324,12 @@ async function tunnelServer() {
       const entry = listeners.get(p)
       if (!entry) return false
       listeners.delete(p)
+      // Revoke immediately: drop established beams for this peer, then close the listener.
+      let dropped = 0
+      for (const conn of entry.conns) { try { conn.destroy(); dropped++ } catch {} }
+      entry.conns.clear()
       try { await entry.server.close() } catch (e) { try { entry.server.destroy?.() } catch {} }
-      console.log(JSON.stringify({ event: 'peer-listener-removed', mode: 'tunnel-server-id', peer: p, reason: 'revoked-or-removed' }))
+      console.log(JSON.stringify({ event: 'peer-listener-removed', mode: 'tunnel-server-id', peer: p, reason: 'revoked-or-removed', connections_dropped: dropped }))
       return true
     }
 

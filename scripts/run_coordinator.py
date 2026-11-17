@@ -19,6 +19,7 @@ from diloco.checkpoint import CheckpointStore, load_initial_state, save_initial_
 from diloco.config import load_config  # noqa: E402
 from diloco.coordinator import Coordinator  # noqa: E402
 from diloco.holepunch import HolepunchSidecar  # noqa: E402
+from diloco.tunnel_allowlist import write_peer_allowlist  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -216,11 +217,11 @@ def main() -> int:
     if args.p2p_topic:
         peer_pubkeys = list(cfg.coordinator.allowed_node_pubkeys or [])
         if coord_identity and peer_pubkeys:
-            # Export effective allowlist so identity tunnel can hot-add/revoke peers from file updates
+            # Export effective allowlist atomically/idempotently so the identity
+            # tunnel can hot-add/revoke peers from file updates (P2.5).
             peer_file = checkpoint_dir / "allowed_peer_pubkeys.txt"
             try:
-                peer_file.parent.mkdir(parents=True, exist_ok=True)
-                peer_file.write_text("\n".join(str(p).strip() for p in peer_pubkeys if str(p).strip()) + "\n", encoding="utf-8")
+                write_peer_allowlist(peer_file, peer_pubkeys)
             except Exception as exc:  # noqa: BLE001
                 logging.warning("could not write tunnel peer allowlist file %s: %s", peer_file, exc)
                 peer_file = None
