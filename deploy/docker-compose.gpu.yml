@@ -1,0 +1,68 @@
+# DiLoCo GPU worker (and optional local coordinator) for one-command runs.
+#
+# Usage:
+#   export JOIN_CODE='didiloco://join?h=...&t=...'   # from `pilot.py up`
+#   docker compose -f deploy/docker-compose.gpu.yml up -d --build
+#
+# Requires the NVIDIA Container Toolkit on the host.
+# The coordinator is optional: enable it with --profile coordinator and copy
+# the join code from `docker compose logs diloco-coordinator` into JOIN_CODE.
+
+services:
+  diloco-worker-gpu:
+    build:
+      context: ..
+      dockerfile: Dockerfile.gpu
+      args:
+        CUDA_IMAGE: ${CUDA_IMAGE:-nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04}
+        TORCH_VERSION: ${TORCH_VERSION:-2.8.0}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
+    image: diloco-wan-gpu:latest
+    container_name: diloco-worker-gpu
+    restart: unless-stopped
+    gpus: all
+    environment:
+      JOIN_CODE: ${JOIN_CODE:-}
+      NODE_ID: ${NODE_ID:-worker-gpu}
+      SHARD_ID: ${SHARD_ID:-0}
+      DEVICE: ${DEVICE:-cuda}
+      NO_TUNNEL: ${NO_TUNNEL:-0}
+      HF_HOME: /cache/hf
+      TOKENIZERS_PARALLELISM: "false"
+    volumes:
+      - ../configs:/app/configs
+      - diloco_gpu_runs:/app/runs
+      - hf_cache:/cache/hf
+    shm_size: 8gb
+    command: ["python3", "scripts/run_worker.py", "--help"]
+
+  diloco-coordinator:
+    profiles: ["coordinator"]
+    build:
+      context: ..
+      dockerfile: Dockerfile.gpu
+      args:
+        CUDA_IMAGE: ${CUDA_IMAGE:-nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04}
+        TORCH_VERSION: ${TORCH_VERSION:-2.8.0}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
+    image: diloco-wan-gpu:latest
+    container_name: diloco-coordinator
+    restart: unless-stopped
+    command: >
+      python3 scripts/pilot.py up
+      --name ${RUN_NAME:-gpu-run}
+      --preset ${PRESET:-32b-qlora}
+      --workers ${WORKERS:-1}
+      --rounds ${ROUNDS:-4}
+      --device cpu
+      --advertise-host diloco-coordinator
+      --no-tunnel
+    volumes:
+      - ../configs:/app/configs
+      - diloco_gpu_runs:/app/runs
+    expose:
+      - "8095"
+
+volumes:
+  diloco_gpu_runs:
+  hf_cache:

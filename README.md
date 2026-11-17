@@ -67,6 +67,18 @@ y el tráfico por ronda baja drásticamente frente a replicar pesos completos.
 ```
 Si el worker tiene init-state/cache compatible, evita re-descargar el estado global completo.
 
+**Flujo one-command (recomendado, sin editar archivos):**
+```bash
+# Quien organiza: imprime una línea didiloco://join?... y su QR
+.venv/bin/python scripts/pilot.py up --name demo --preset toy --workers 2
+
+# Cada worker (en otra máquina): pega la línea
+.venv/bin/python scripts/pilot.py join 'didiloco://join?...' --node-id worker-a
+```
+Ver [docs/ONE_COMMAND.md](docs/ONE_COMMAND.md).
+
+**Entrenar en GPU con Docker:** [docs/DOCKER_GPU.md](docs/DOCKER_GPU.md) — imagen CUDA + HF/PEFT, `docker compose -f deploy/docker-compose.gpu.yml` y `JOIN_CODE`.
+
 **Identidad BSV + invite firmado (MVP):**
 ```bash
 .venv/bin/python scripts/identity_init.py --name coordinator
@@ -95,6 +107,7 @@ cd network/holepunch-sidecar && npm install
 
 ## 📚 Documentación
 - [Onboarding](docs/ONBOARDING.md) — de cero a tu primera ronda.
+- [One-command](docs/ONE_COMMAND.md) · [Docker GPU](docs/DOCKER_GPU.md) · [Validación WAN/NAT](docs/VALIDACION_WAN_NAT.md)
 - [Despliegue público/privado](docs/DEPLOY_PUBLIC_DASHBOARD.md) — estado público, dashboard/agente privado y nginx.
 - [Algoritmo](docs/01-algoritmo.md) · [Arquitectura](docs/02-arquitectura.md) · [Comunicación](docs/03-comunicacion.md)
 - [Modelos](docs/04-modelos.md) · [Entrenamiento](docs/05-entrenamiento.md) · [Operaciones](docs/06-operaciones.md)

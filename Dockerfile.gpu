@@ -1,0 +1,55 @@
+# GPU image for DiLoCo workers (CUDA runtime + PyTorch + HF/PEFT + bitbeam sidecar).
+#
+# Build:
+#   docker build -f Dockerfile.gpu -t diloco-wan-gpu:latest .
+#
+# Override CUDA/torch variants if needed:
+#   docker build -f Dockerfile.gpu \
+#     --build-arg CUDA_IMAGE=nvidia/cuda:12.6.0-cudnn-runtime-ubuntu22.04 \
+#     --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126 \
+#     -t diloco-wan-gpu:cu126 .
+#
+# Run:
+#   docker run --gpus all -e JOIN_CODE='didiloco://join?...' diloco-wan-gpu:latest
+ARG CUDA_IMAGE=nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+FROM ${CUDA_IMAGE}
+
+ARG TORCH_VERSION=2.8.0
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+WORKDIR /app
+
+# Python + build tooling + git/curl for deps and model downloads.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev git ca-certificates curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# CUDA-enabled torch from the PyTorch wheel index (default PyPI wheel may be CPU-only).
+# Kept before the Node layer so changing Node does not re-download the 2 GB wheel.
+RUN python3 -m pip install --upgrade pip setuptools wheel \
+    && python3 -m pip install "torch==${TORCH_VERSION}" --index-url "${TORCH_INDEX_URL}"
+
+# Node 22 for the bitbeam identity/tunnel sidecar (@bsv/sdk requires >=22).
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Project sources first so the HF extra can be installed from pyproject.toml.
+COPY . /app
+
+# HF/PEFT/QLoRA stack + gRPC transport, then bitbeam sidecar deps.
+RUN python3 -m pip install ".[hf]" \
+    && cd /app/network/holepunch-sidecar && npm install --omit=dev \
+    && chmod +x /app/scripts/docker_entrypoint_gpu.sh
+
+EXPOSE 8095 8765
+
+ENTRYPOINT ["/app/scripts/docker_entrypoint_gpu.sh"]
+CMD ["python3", "scripts/run_worker.py", "--help"]

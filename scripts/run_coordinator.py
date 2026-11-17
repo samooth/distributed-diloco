@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--join-token", default="", help="invite join token (generated automatically if empty and --print-invite is used)")
     parser.add_argument("--join-max-uses", type=int, default=2, help="max workers that may join with one invite (default: 2)")
     parser.add_argument("--join-ttl-s", type=int, default=3600, help="invite validity in seconds (default: 3600)")
+    parser.add_argument("--advertise-host", default="", help="host to publish in the invite endpoint (e.g. container/service name)")
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -73,7 +74,7 @@ def _build_invite(cfg, coordinator, port: int, args, coord_identity: str, p2p_co
         "config_hash": cfg.fingerprint(),
         "base_hash": str(getattr(coordinator, "base_hash", "") or ""),
         "transport": cfg.coordinator.transport,
-        "endpoint": f"http://{cfg.coordinator.host}:{port}",
+        "endpoint": f"http://{getattr(args, 'advertise_host', '') or cfg.coordinator.host}:{port}",
         "expires_at": int(_time.time()) + max(60, int(getattr(args, "join_ttl_s", 3600))),
         "allowed_node_pubkeys": list(cfg.coordinator.allowed_node_pubkeys or []),
         "require_node_identity": bool(cfg.coordinator.require_node_identity),

@@ -189,8 +189,6 @@ def cmd_up(args: argparse.Namespace) -> int:
         "--config", cfg_path,
         "--device", args.device,
         "--coordinator-identity", str(identity_path),
-        "--p2p-topic", topic,
-        "--p2p-context", context,
         "--require-node-identity",
         "--join-token", token,
         "--join-max-uses", str(args.workers),
@@ -199,6 +197,10 @@ def cmd_up(args: argparse.Namespace) -> int:
         "--checkpoint-dir", str(out_dir / "checkpoints"),
         "--no-wait",
     ]
+    if not args.no_tunnel:
+        cmd += ["--p2p-topic", topic, "--p2p-context", context]
+    if args.advertise_host:
+        cmd += ["--advertise-host", args.advertise_host]
     if args.no_resume:
         cmd.append("--no-resume")
     if args.reset:
@@ -389,6 +391,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ttl", type=int, default=3600)
     p.add_argument("--p2p-topic", default="")
     p.add_argument("--p2p-context", default="")
+    p.add_argument("--advertise-host", default="", help="host to publish in the invite (e.g. Docker service name)")
+    p.add_argument("--no-tunnel", action="store_true", help="skip bitbeam tunnel; advertise a directly reachable host")
     p.add_argument("--no-resume", action="store_true")
     p.add_argument("--reset", action="store_true")
     p.set_defaults(func=cmd_up)
