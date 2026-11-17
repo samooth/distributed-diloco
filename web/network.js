@@ -20,6 +20,14 @@ const fmtBytes = (v) => {
   return (x >= 10 ? x.toFixed(1) : x.toFixed(2)) + " " + units[i];
 };
 
+const fmtUploadCell = (wire, blob) => {
+  const w = fmtBytes(wire);
+  const wb = Number(wire), bb = Number(blob);
+  if (!isFinite(wb) || !isFinite(bb) || bb <= 0 || wb <= 0 || wb >= bb) return w;
+  const pct = Math.max(0, Math.min(99, Math.round((1 - wb / bb) * 100)));
+  return `${w} <span class="kpi-sub" title="sin comprimir: ${fmtBytes(blob)}">(${pct}%↓)</span>`;
+};
+
 const applyTheme = (theme) => {
   document.body.classList.toggle("dark", theme === "dark");
   const btn = $("theme-toggle");
@@ -148,7 +156,7 @@ async function refreshCoord() {
     } else {
       hist.slice().reverse().forEach((r) => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td class="mono">${escapeHtml(r.round)}</td><td>${(r.nodes || []).length}</td><td class="mono">${isFinite(Number(r.train_loss)) ? Number(r.train_loss).toFixed(4) : "—"}</td><td class="mono">${isFinite(Number(r.sync_seconds)) ? Number(r.sync_seconds).toFixed(2) : "—"}</td><td class="mono">${fmtBytes(r.update_bytes_total)}</td><td class="mono">${fmtBytes(r.state_blob_bytes)}</td>`;
+        tr.innerHTML = `<td class="mono">${escapeHtml(r.round)}</td><td>${(r.nodes || []).length}</td><td class="mono">${isFinite(Number(r.train_loss)) ? Number(r.train_loss).toFixed(4) : "—"}</td><td class="mono">${isFinite(Number(r.sync_seconds)) ? Number(r.sync_seconds).toFixed(2) : "—"}</td><td class="mono">${fmtUploadCell(r.update_bytes_total, r.update_blob_bytes_total)}</td><td class="mono">${fmtBytes(r.state_blob_bytes)}</td>`;
         rt.appendChild(tr);
       });
     }

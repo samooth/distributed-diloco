@@ -1438,6 +1438,68 @@ class LocalhostSmokeTests(unittest.TestCase):
                 worker.close()
                 coordinator.stop()
 
+    def test_compression_effectiveness_metrics_exposed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ExperimentConfig(
+                run_id="unit-compression-metrics",
+                model=ModelConfig(kind="toy", in_features=16, out_features=8, rank=4, alpha=4.0),
+                train=TrainConfig(H=5, inner_lr=0.05, batch_size=8, seed=42),
+                data=DataConfig(num_shards=1, eval_samples=32, eval_every=1),
+                coordinator=CoordinatorConfig(
+                    host="127.0.0.1",
+                    port=0,
+                    min_workers=1,
+                    max_workers=1,
+                    quorum=1,
+                    round_timeout_s=20.0,
+                    max_rounds=1,
+                    checkpoint_dir=tmp,
+                    checkpoint_every=1,
+                    token="compression-metrics-token",
+                    idle_timeout_s=30.0,
+                    wire_compression="gzip",
+                ),
+            )
+            state, base_hash, adapter_meta = initial_adapter_state(config, device="cpu")
+            coordinator = Coordinator(config, state, base_hash, adapter_meta)
+            port = coordinator.start()
+            backend = build_backend(config, shard_id=0, device="cpu")
+            worker = Worker(
+                config,
+                "node-compression-metrics",
+                f"http://127.0.0.1:{port}",
+                backend,
+                log_path=str(Path(tmp) / "compression-metrics.jsonl"),
+            )
+            try:
+                summary = worker.run()
+                self.assertEqual(summary["rounds_done"], 1)
+                self.assertIsNone(summary.get("failure"))
+
+                st = coordinator.status()
+                last = st.get("last_result") or {}
+                self.assertGreater(int(last.get("update_bytes_total", 0)), 0)
+                self.assertGreater(int(last.get("update_blob_bytes_total", 0)), 0)
+                self.assertIn("update_blob_bytes_by_node", last)
+                wire = int(last["update_bytes_total"])
+                blob = int(last["update_blob_bytes_total"])
+                self.assertGreaterEqual(blob, wire)
+                hist = st.get("history") or []
+                self.assertTrue(hist)
+                self.assertIn("update_blob_bytes_total", hist[0])
+
+                pub = coordinator.public_status()
+                lr = pub.get("last_round") or {}
+                self.assertGreater(int(lr.get("update_blob_bytes_total", 0)), 0)
+                self.assertIn("update_blob_bytes_total", (pub.get("history") or [{}])[0])
+            finally:
+                try:
+                    worker.leave()
+                except Exception:
+                    pass
+                worker.close()
+                coordinator.stop()
+
     def test_round_timeout_without_partial_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = ExperimentConfig(

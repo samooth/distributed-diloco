@@ -322,7 +322,7 @@
           <div class="trend"><div class="label">Train loss</div><div class="value" id="trend-loss-val">—</div><svg class="spark" id="spark-loss" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de train loss"></svg></div>
           <div class="trend"><div class="label">Delta norm</div><div class="value" id="trend-delta-val">—</div><svg class="spark" id="spark-delta" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de delta norm"></svg></div>
           <div class="trend"><div class="label">Sync (s)</div><div class="value" id="trend-sync-val">—</div><svg class="spark" id="spark-sync" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de tiempo de sincronización"></svg></div>
-          <div class="trend"><div class="label">Upload / ronda</div><div class="value" id="trend-bytes-val">—</div><svg class="spark" id="spark-bytes" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de bytes subidos"></svg></div>
+          <div class="trend"><div class="label">Upload / ronda (wire)</div><div class="value" id="trend-bytes-val">—</div><svg class="spark" id="spark-bytes" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Tendencia de bytes subidos en wire"></svg></div>
         </div>
       </section>
 
@@ -336,7 +336,7 @@
             <tr><td>Delta norm</td><td class="mono" id="lrDelta2">—</td></tr>
             <tr><td>Sync (s)</td><td class="mono" id="lrSync">—</td></tr>
             <tr><td>Global step</td><td class="mono" id="lrStep">—</td></tr>
-            <tr><td>Upload total</td><td class="mono" id="lrUpBytes">—</td></tr>
+            <tr><td>Upload total (wire)</td><td class="mono" id="lrUpBytes">—</td></tr>
             <tr><td>State blob</td><td class="mono" id="lrStateBytes">—</td></tr>
           </table>
         </div>
@@ -424,6 +424,14 @@
       return (x >= 10 ? x.toFixed(1) : x.toFixed(2)) + ' ' + units[i];
     };
 
+    const fmtUpload = (wire, blob) => {
+      const w = fmtBytes(wire);
+      const wb = Number(wire), bb = Number(blob);
+      if (!isFinite(wb) || !isFinite(bb) || bb <= 0 || wb <= 0 || wb >= bb) return w;
+      const pct = Math.max(0, Math.min(99, Math.round((1 - wb / bb) * 100)));
+      return `${w} (↓${pct}%, ${fmtBytes(bb)} raw)`;
+    };
+
     function setStatus(kind, text) {
       const dot = $('dot');
       dot.className = 'dot' + (kind ? ' ' + kind : '');
@@ -502,7 +510,7 @@
       $('trend-loss-val').textContent = fmtSmart(last.train_loss);
       $('trend-delta-val').textContent = fmtSmart(last.delta_norm);
       $('trend-sync-val').textContent = last.sync_seconds == null ? '—' : fmt(last.sync_seconds, 2) + ' s';
-      $('trend-bytes-val').textContent = fmtBytes(last.update_bytes_total);
+      $('trend-bytes-val').textContent = fmtUpload(last.update_bytes_total, last.update_blob_bytes_total);
     }
 
     function render(data) {
@@ -553,7 +561,7 @@
       $('lrLoss2').textContent = lr ? fmtSmart(lr.train_loss) : '—';
       $('lrSync').textContent = lr ? fmt(lr.sync_seconds, 3) : '—';
       $('lrStep').textContent = lr ? fmtInt(lr.global_step) : '—';
-      $('lrUpBytes').textContent = lr ? fmtBytes(lr.update_bytes_total) : '—';
+      $('lrUpBytes').textContent = lr ? fmtUpload(lr.update_bytes_total, lr.update_blob_bytes_total) : '—';
       $('lrStateBytes').textContent = lr ? fmtBytes(lr.state_blob_bytes) : '—';
 
       renderTrends(data.history || []);

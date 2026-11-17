@@ -441,6 +441,7 @@ class Coordinator:
                             update_hash=hash_blob(body),
                             node_sig=str(meta.get("node_sig", "") or ""),
                             update_bytes=wire_bytes,
+                            update_blob_bytes=len(body),
                         )
                         accept_wire = parse_accept_wire(self.headers.get("X-DiLoCo-Accept-Wire-Compression", ""))
                         resp_wire_codec = negotiate_wire_codec(coordinator.config.coordinator.wire_compression, accept_wire)
@@ -784,6 +785,7 @@ class Coordinator:
         update_hash: str,
         node_sig: str = "",
         update_bytes: int = 0,
+        update_blob_bytes: int = 0,
     ) -> bytes:
         if weight <= 0 or not torch.isfinite(torch.tensor(weight)).item():
             raise ApiError(400, "weight must be positive and finite")
@@ -824,6 +826,7 @@ class Coordinator:
                 "train_loss": float(train_loss),
                 "update_hash": str(update_hash),
                 "update_bytes": int(update_bytes or 0),
+                "update_blob_bytes": int(update_blob_bytes or 0),
                 "received_at": time.time(),
             }
             self.registered[node_id]["last_seen"] = time.time()
@@ -918,6 +921,8 @@ class Coordinator:
         state_blob_bytes = int(self._ensure_state_blob_locked().get("blob_size", 0) or 0)
         update_bytes_by_node = {node_id: int(self.updates[node_id].get("update_bytes", 0) or 0) for node_id in node_ids}
         update_bytes_total = int(sum(update_bytes_by_node.values()))
+        update_blob_bytes_by_node = {node_id: int(self.updates[node_id].get("update_blob_bytes", 0) or 0) for node_id in node_ids}
+        update_blob_bytes_total = int(sum(update_blob_bytes_by_node.values()))
         metrics: Dict[str, Any] = {
             "round": round_id,
             "new_round": self.round_index,
@@ -932,6 +937,8 @@ class Coordinator:
             "sync_seconds": float(sync_seconds),
             "update_bytes_total": update_bytes_total,
             "update_bytes_by_node": update_bytes_by_node,
+            "update_blob_bytes_total": update_blob_bytes_total,
+            "update_blob_bytes_by_node": update_blob_bytes_by_node,
             "state_blob_bytes": state_blob_bytes,
             "state_hash": self._state_hash,
             "done": self.round_index >= int(self.config.coordinator.max_rounds),
@@ -1071,6 +1078,7 @@ class Coordinator:
                     "delta_norm": float(last["delta_norm"]) if last.get("delta_norm") is not None else None,
                     "sync_seconds": float(last["sync_seconds"]) if last.get("sync_seconds") is not None else None,
                     "update_bytes_total": int(last["update_bytes_total"]) if last.get("update_bytes_total") is not None else None,
+                    "update_blob_bytes_total": int(last["update_blob_bytes_total"]) if last.get("update_blob_bytes_total") is not None else None,
                     "state_blob_bytes": int(last["state_blob_bytes"]) if last.get("state_blob_bytes") is not None else None,
                     "nodes_count": len(last.get("nodes") or []),
                     "done": bool(last.get("done", False)),
@@ -1089,6 +1097,7 @@ class Coordinator:
                     "delta_norm": float(item["delta_norm"]) if item.get("delta_norm") is not None else None,
                     "sync_seconds": float(item["sync_seconds"]) if item.get("sync_seconds") is not None else None,
                     "update_bytes_total": int(item["update_bytes_total"]) if item.get("update_bytes_total") is not None else None,
+                    "update_blob_bytes_total": int(item["update_blob_bytes_total"]) if item.get("update_blob_bytes_total") is not None else None,
                     "state_blob_bytes": int(item["state_blob_bytes"]) if item.get("state_blob_bytes") is not None else None,
                     "nodes_count": len(item.get("nodes") or []),
                     "partial": bool(item.get("partial", False)),

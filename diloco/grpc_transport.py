@@ -269,6 +269,7 @@ else:
                     update_hash=hash_blob(payload),
                     node_sig=str(meta.get("node_sig", "") or ""),
                     update_bytes=int(wire_bytes),
+                    update_blob_bytes=len(payload),
                 )
             except Exception as exc:  # noqa: BLE001
                 from .coordinator import ApiError
