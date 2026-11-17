@@ -58,7 +58,7 @@ def canonical_invite(payload: Dict[str, Any]) -> str:
     keys = [
         "type", "run_id", "coordinator_pubkey", "topic", "context",
         "config_hash", "base_hash", "transport", "expires_at",
-        "allowed_node_pubkeys", "endpoint",
+        "allowed_node_pubkeys", "endpoint", "join_token", "max_uses", "config_json",
     ]
     parts = []
     for k in keys:
@@ -68,3 +68,14 @@ def canonical_invite(payload: Dict[str, Any]) -> str:
                 v = ",".join(str(x) for x in v)
             parts.append(f"{k}={v}")
     return "diloco.invite|" + "|".join(parts)
+
+
+def canonical_join(payload: Dict[str, Any]) -> str:
+    """Message signed by a worker when requesting admission via an invite."""
+    keys = ["type", "run_id", "node_id", "pubkey", "token", "config_hash", "base_hash"]
+    parts = []
+    for k in keys:
+        if k in payload and payload[k] is not None:
+            parts.append(f"{k}={payload[k]}")
+    return "diloco.join|" + "|".join(parts)
+

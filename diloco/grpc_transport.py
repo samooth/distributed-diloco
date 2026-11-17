@@ -122,6 +122,28 @@ else:
             except Exception as exc:  # noqa: BLE001
                 context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"invalid wire-compressed payload: {exc}")
 
+        def Join(self, request: Any, context: Any) -> Any:
+            # Authorized by invite token + worker signature, not the coordinator token.
+            try:
+                result = self.coordinator.join(
+                    node_id=str(request.node_id),
+                    pubkey=str(request.pubkey),
+                    node_sig=str(request.node_sig),
+                    token=str(request.token),
+                    config_hash=str(getattr(request, "config_hash", "") or ""),
+                    base_hash=str(getattr(request, "base_hash", "") or ""),
+                    run_id=str(getattr(request, "run_id", "") or ""),
+                    sig_alg=str(getattr(request, "sig_alg", "") or ""),
+                )
+            except Exception as exc:  # noqa: BLE001
+                from .coordinator import ApiError
+
+                if isinstance(exc, ApiError):
+                    _abort(context, exc)
+                    return
+                raise
+            return pb2.JoinResponse(json=json.dumps(result, sort_keys=True, default=str))
+
         def Register(self, request: Any, context: Any) -> Any:
             self._authorize(context)
             try:
@@ -408,6 +430,38 @@ else:
                 except Exception:
                     return raw, wire_bytes, len(raw)
             return raw, wire_bytes, len(raw)
+
+        def join(
+            self,
+            node_id: str,
+            pubkey: str,
+            node_sig: str,
+            token: str,
+            config_hash: str = "",
+            base_hash: str = "",
+            run_id: str = "",
+            sig_alg: str = "",
+        ) -> Dict[str, Any]:
+            try:
+                response = self.stub.Join(
+                    pb2.JoinRequest(
+                        node_id=node_id,
+                        pubkey=pubkey,
+                        node_sig=node_sig,
+                        token=token,
+                        config_hash=config_hash,
+                        base_hash=base_hash,
+                        run_id=run_id,
+                        sig_alg=sig_alg,
+                    ),
+                    metadata=self._metadata(include_accept=False),
+                )
+            except grpc.RpcError as exc:
+                self._raise_rpc_error(exc)
+            try:
+                return json.loads(response.json)
+            except Exception:
+                return {}
 
         def register(
             self,

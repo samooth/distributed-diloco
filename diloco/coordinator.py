@@ -14,7 +14,8 @@ import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, List, Mapping, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Set
 from urllib.parse import parse_qs, urlparse
 
 import torch
@@ -29,6 +30,7 @@ except RuntimeError:  # grpcio is optional
     GrpcCoordinatorServer = None
 from .outer import OuterOptimizer
 from .protocol import ProtocolError, hash_blob, pack_state, unpack_state
+from .tunnel_allowlist import write_peer_allowlist
 from .tensor_utils import (
     State,
     average_state,
@@ -127,6 +129,15 @@ class Coordinator:
         self.last_result: Optional[Dict[str, Any]] = None
         self.history: List[Dict[str, Any]] = []
         self._round_timeout_ema: Optional[float] = None
+        # Invite-based admission (P2/P6 one-command UX). Tokens are configured
+        # at startup by run_coordinator.py; the runtime allowlist is extended
+        # when a worker joins and mirrored to the identity-tunnel peer file.
+        self._join_tokens: Dict[str, Dict[str, Any]] = {}
+        self._invite: Optional[Dict[str, Any]] = None
+        self._runtime_allowed_pubkeys: Set[str] = {
+            str(p).strip() for p in (config.coordinator.allowed_node_pubkeys or ()) if str(p).strip()
+        }
+        self._peer_file = Path(config.coordinator.checkpoint_dir) / "allowed_peer_pubkeys.txt"
         self.store = CheckpointStore(
             config.coordinator.checkpoint_dir,
             object_store=create_object_store(
@@ -259,6 +270,10 @@ class Coordinator:
                         return
                     if route == "/v1/public/status":
                         self._send_json(200, coordinator.public_status())
+                        return
+                    if route == "/v1/invite":
+                        # Authorized by the invite token itself; no coordinator token.
+                        self._send_json(200, coordinator.get_invite(str(self._query().get("token", ""))))
                         return
                     self._authorize()
                     if route in ("/v1/metrics", "/v1/status"):
@@ -425,7 +440,25 @@ class Coordinator:
             def do_POST(self) -> None:
                 try:
                     route = self._route()
-                    self._authorize()
+                    # /v1/join is authorized by the signed invite token plus the
+                    # worker's own signature; workers do not hold the coordinator
+                    # token (that would defeat the invite-only flow).
+                    if route != "/v1/join":
+                        self._authorize()
+                    if route == "/v1/join":
+                        payload = self._read_json()
+                        result = coordinator.join(
+                            node_id=str(payload.get("node_id", "")),
+                            pubkey=str(payload.get("pubkey", "")),
+                            node_sig=str(payload.get("node_sig", "")),
+                            token=str(payload.get("token", "")),
+                            config_hash=str(payload.get("config_hash", "")),
+                            base_hash=str(payload.get("base_hash", "")),
+                            run_id=str(payload.get("run_id", "") or ""),
+                            sig_alg=str(payload.get("sig_alg", "") or ""),
+                        )
+                        self._send_json(200, result)
+                        return
                     if route == "/v1/register":
                         payload = self._read_json()
                         result = coordinator.register(
@@ -808,6 +841,129 @@ class Coordinator:
         max_s = self._round_timeout_cap_locked()
         return max(min_s, min(max_s, float(eff)))
 
+    def set_invite(self, invite: Mapping[str, Any]) -> None:
+        """Store the signed invite so workers can fetch it with their token."""
+        with self.cond:
+            self._invite = dict(invite)
+
+    def get_invite(self, token: str = "") -> Dict[str, Any]:
+        if self._invite is None:
+            raise ApiError(404, "no invite has been configured for this run")
+        if token:
+            expected = str(self._invite.get("join_token", "") or "")
+            if not expected or not hmac.compare_digest(str(token), expected):
+                raise ApiError(403, "invalid invite token")
+        return dict(self._invite)
+
+    def configure_join_token(
+        self,
+        token: str,
+        max_uses: int = 1,
+        expires_at: float = 0.0,
+        config_hash: str = "",
+        base_hash: str = "",
+    ) -> None:
+        """Register a one-time invite token that permits workers to self-admit."""
+        token = str(token or "")
+        if not token:
+            raise ApiError(400, "join token cannot be empty")
+        with self.cond:
+            self._join_tokens[token] = {
+                "uses": 0,
+                "max_uses": max(1, int(max_uses)),
+                "expires_at": float(expires_at or 0.0),
+                "config_hash": str(config_hash or ""),
+                "base_hash": str(base_hash or ""),
+            }
+            LOG.info(
+                "join token configured (max_uses=%s, expires_at=%s)",
+                max(1, int(max_uses)), expires_at,
+            )
+
+    def join(
+        self,
+        node_id: str,
+        pubkey: str,
+        node_sig: str,
+        token: str,
+        config_hash: str = "",
+        base_hash: str = "",
+        run_id: str = "",
+        sig_alg: str = "",
+    ) -> Dict[str, Any]:
+        """Admit a worker using a signed invite token (no manual allowlist edits)."""
+        node_id = str(node_id or "").strip()
+        pubkey = str(pubkey or "").strip()
+        token = str(token or "").strip()
+        if not node_id or len(node_id) > 128:
+            raise ApiError(400, "node_id must be 1-128 characters")
+        if not pubkey or not token or not str(node_sig or "").strip():
+            raise ApiError(400, "pubkey, token and signature are required to join")
+        with self.cond:
+            self._evict_stale_locked()
+            if self.failure:
+                raise ApiError(503, f"run failed: {self.failure}")
+            if self.finished:
+                raise ApiError(410, "run is already finished")
+            record = self._join_tokens.get(token)
+            if record is None:
+                raise ApiError(403, "invalid or unknown join token")
+            expires = float(record.get("expires_at", 0.0) or 0.0)
+            if expires > 0 and time.time() > expires:
+                raise ApiError(403, "join token has expired; request a new invite")
+            uses = int(record.get("uses", 0))
+            max_uses = int(record.get("max_uses", 1))
+            if uses >= max_uses:
+                raise ApiError(403, "join token has already been used; request a new invite")
+            expected_cfg = str(record.get("config_hash", "") or "")
+            expected_base = str(record.get("base_hash", "") or "")
+            if expected_cfg and not hmac.compare_digest(str(config_hash), expected_cfg):
+                raise ApiError(409, "config fingerprint mismatch (invite does not match this run)")
+            if expected_base and not hmac.compare_digest(str(base_hash), expected_base):
+                raise ApiError(409, "base model fingerprint mismatch")
+            if run_id and str(run_id) != self.config.run_id:
+                raise ApiError(409, "run_id mismatch")
+            try:
+                from .identity import canonical_join, verify_message
+
+                message = canonical_join({
+                    "type": "diloco-join-v1",
+                    "run_id": self.config.run_id,
+                    "node_id": node_id,
+                    "pubkey": pubkey,
+                    "token": token,
+                    "config_hash": str(config_hash),
+                    "base_hash": str(base_hash),
+                })
+                if not verify_message(pubkey, message, str(node_sig)):
+                    raise ApiError(403, "invalid join signature")
+            except ApiError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise ApiError(403, f"join signature verification failed: {exc}") from exc
+
+            self._runtime_allowed_pubkeys.add(pubkey)
+            try:
+                write_peer_allowlist(self._peer_file, sorted(self._runtime_allowed_pubkeys))
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("could not update tunnel peer allowlist: %s", exc)
+            record["uses"] = uses + 1
+            self.known_nodes.add(node_id)
+            self.last_activity = time.time()
+            LOG.info(
+                "worker %s admitted via invite token (uses=%s/%s, pubkey=%s)",
+                node_id, record["uses"], max_uses, pubkey[:16] + "...",
+            )
+            self.cond.notify_all()
+            return {
+                "ok": True,
+                "node_id": node_id,
+                "round": int(self.round_index),
+                "max_rounds": int(self.config.coordinator.max_rounds),
+                "remaining_uses": max(0, max_uses - record["uses"]),
+                "allowed_node_pubkeys": sorted(self._runtime_allowed_pubkeys),
+            }
+
     def register(
         self,
         node_id: str,
@@ -829,7 +985,7 @@ class Coordinator:
         node_sig = str(node_sig or "").strip()
         sig_alg = str(sig_alg or "").strip()
         run_id = str(run_id or self.config.run_id)
-        allowed = tuple(self.config.coordinator.allowed_node_pubkeys or ())
+        allowed = tuple(sorted(self._runtime_allowed_pubkeys))
         if self.config.coordinator.require_node_identity and not node_pubkey:
             raise ApiError(403, "node identity is required")
         if allowed and node_pubkey not in allowed:

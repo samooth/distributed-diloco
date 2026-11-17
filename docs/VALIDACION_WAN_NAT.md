@@ -1,5 +1,12 @@
 # Validación WAN / NAT multi-máquina (P2.4)
 
+> **Flujo recomendado (sin editar archivos):** usa `docs/ONE_COMMAND.md`.
+> `pilot.py up --name <run> --preset <preset> --workers 2` imprime un código
+> `didiloco://join?...`; cada worker ejecuta `pilot.py join '<código>'`. Eso
+> sustituye los pasos 1–2 de abajo (identidades, allowlist, invites y flags).
+> Los comandos manuales se mantienen como referencia y para el modo de túnel
+> de identidad con allowlist conocida de antemano.
+
 Runbook para validar el entrenamiento DiLoCo sobre internet real con los peers
 detrás de NAT. **Requiere 2+ máquinas con acceso a internet y credenciales de
 identidad BSV**; por eso la ejecución real queda pendiente de un entorno con

@@ -3,6 +3,7 @@ syntax = "proto3";
 package diloco;
 
 service Coordinator {
+  rpc Join(JoinRequest) returns (JoinResponse);
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc GetState(StateRequest) returns (StateResponse);
@@ -12,6 +13,21 @@ service Coordinator {
   rpc Leave(LeaveRequest) returns (LeaveResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message JoinRequest {
+  string node_id = 1;
+  string pubkey = 2;
+  string node_sig = 3;
+  string sig_alg = 4;
+  string token = 5;
+  string config_hash = 6;
+  string base_hash = 7;
+  string run_id = 8;
+}
+
+message JoinResponse {
+  string json = 1;
 }
 
 message RegisterRequest {

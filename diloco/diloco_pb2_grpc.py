@@ -34,6 +34,11 @@ class CoordinatorStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.Join = channel.unary_unary(
+                '/diloco.Coordinator/Join',
+                request_serializer=diloco__pb2.JoinRequest.SerializeToString,
+                response_deserializer=diloco__pb2.JoinResponse.FromString,
+                _registered_method=True)
         self.Register = channel.unary_unary(
                 '/diloco.Coordinator/Register',
                 request_serializer=diloco__pb2.RegisterRequest.SerializeToString,
@@ -83,6 +88,12 @@ class CoordinatorStub:
 
 class CoordinatorServicer:
     """Missing associated documentation comment in .proto file."""
+
+    def Join(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def Register(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -141,6 +152,11 @@ class CoordinatorServicer:
 
 def add_CoordinatorServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'Join': grpc.unary_unary_rpc_method_handler(
+                    servicer.Join,
+                    request_deserializer=diloco__pb2.JoinRequest.FromString,
+                    response_serializer=diloco__pb2.JoinResponse.SerializeToString,
+            ),
             'Register': grpc.unary_unary_rpc_method_handler(
                     servicer.Register,
                     request_deserializer=diloco__pb2.RegisterRequest.FromString,
@@ -196,6 +212,33 @@ def add_CoordinatorServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class Coordinator:
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def Join(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/diloco.Coordinator/Join',
+            diloco__pb2.JoinRequest.SerializeToString,
+            diloco__pb2.JoinResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def Register(request,

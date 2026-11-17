@@ -30,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--coordinator-pubkey", default="", help="coordinator BSV pubkey for per-pair identity tunnel")
     parser.add_argument("--tunnel-listen-host", default="127.0.0.1")
     parser.add_argument("--tunnel-listen-port", type=int, default=0)
+    parser.add_argument("--no-tunnel", action="store_true", help="skip bitbeam tunnel and use the invite endpoint directly (LAN/dev)")
     parser.add_argument("--shard-id", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--log", default="")
@@ -48,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    invite_endpoint = ""
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -82,13 +84,17 @@ def main() -> int:
             args.p2p_context = str(invite["context"])
         if not args.coordinator_pubkey and invite.get("coordinator_pubkey"):
             args.coordinator_pubkey = str(invite["coordinator_pubkey"])
-        if not args.coordinator and not args.discover_topic and not args.p2p_topic and not args.grpc_target and invite.get("endpoint"):
+        if not args.coordinator and not args.discover_topic and not args.grpc_target and invite.get("endpoint"):
             ep = str(invite.get("endpoint", ""))
             if ep and not ep.startswith("http://0.0.0.0") and not ep.startswith("http://127.0.0.1:0"):
-                args.coordinator = ep
+                invite_endpoint = ep
+                # Use the endpoint directly only when no P2P transport is
+                # requested; otherwise keep it as a fallback if the tunnel fails.
+                if not args.p2p_topic or args.no_tunnel:
+                    args.coordinator = ep
         logging.info("loaded invite for run %s", invite.get("run_id", "?"))
 
-    if args.coordinator and (args.discover_topic or args.p2p_topic):
+    if args.coordinator and not args.no_tunnel and (args.discover_topic or args.p2p_topic):
         raise SystemExit("use only one of --coordinator, --discover-topic or --p2p-topic")
     if not args.coordinator and not args.discover_topic and not args.p2p_topic and not args.grpc_target:
         raise SystemExit("--coordinator, --discover-topic, --p2p-topic or --grpc-target is required")
@@ -110,9 +116,10 @@ def main() -> int:
 
         coordinator_url = discover_coordinator(args.discover_topic, args.discovery_timeout, args.node_id, cfg.run_id)
         logging.info("discovered coordinator: %s", coordinator_url)
-    if args.p2p_topic:
+    if args.p2p_topic and not args.no_tunnel:
         from diloco.holepunch import HolepunchSidecar
 
+        direct_url = coordinator_url or invite_endpoint
         listen_port = args.tunnel_listen_port or (cfg.coordinator.port + 10000 if cfg.coordinator.port else 18080)
         coord_pubkey = (args.coordinator_pubkey or "").strip()
         context = (args.p2p_context or cfg.run_id or args.p2p_topic).strip()
@@ -127,13 +134,28 @@ def main() -> int:
             tunnel_kwargs.update(identity=node_identity, peer_pubkey=coord_pubkey, context=context)
             logging.info("using identity bitbeam tunnel (peer=%s, context=%s)", coord_pubkey[:16] + "...", context)
         sidecar = HolepunchSidecar(**tunnel_kwargs)
-        sidecar.start()
-        sidecar.wait_for_ready()
-        coordinator_url = f"http://{args.tunnel_listen_host}:{listen_port}"
-        if cfg.coordinator.transport == "grpc":
-            coordinator_url = f"grpc://{args.tunnel_listen_host}:{listen_port}"
-            grpc_target = f"{args.tunnel_listen_host}:{listen_port}"
-        logging.info("coordinator available through Hyperswarm tunnel: %s", coordinator_url)
+        try:
+            sidecar.start()
+            sidecar.wait_for_ready()
+        except Exception as exc:  # noqa: BLE001
+            # DHT/tunnel may be unavailable (offline dev, restrictive NAT). The
+            # invite still carries a reachable endpoint; degrade gracefully.
+            logging.warning(
+                "tunnel unavailable (%s); falling back to invite endpoint %s",
+                exc, direct_url or "(none)",
+            )
+            try:
+                sidecar.stop()
+            except Exception:
+                pass
+            sidecar = None
+            coordinator_url = direct_url
+        else:
+            coordinator_url = f"http://{args.tunnel_listen_host}:{listen_port}"
+            if cfg.coordinator.transport == "grpc":
+                coordinator_url = f"grpc://{args.tunnel_listen_host}:{listen_port}"
+                grpc_target = f"{args.tunnel_listen_host}:{listen_port}"
+            logging.info("coordinator available through Hyperswarm tunnel: %s", coordinator_url)
     if coordinator_url and coordinator_url.startswith("grpc://"):
         grpc_target = coordinator_url[len("grpc://"):]
         coordinator_url = f"http://{grpc_target}"

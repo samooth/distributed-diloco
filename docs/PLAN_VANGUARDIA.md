@@ -93,11 +93,13 @@ Objetivo: operar, depurar y confiar en la red.
 ## 6. UX/DX “one-command” y adopción (PRIORIDAD 6)
 Objetivo: onboarding y operación tan simples como potentes.
 
-- [ ] **`pilot up` completo**: preflight, identidad, export/init, launch coord/workers, join card/QR/invite, dashboard prellenado.
+- [x] **`pilot up` completo**: preflight, identidad, config desde presets (`toy`/`7b-lora`/`32b-qlora`/`70b-qlora`), launch coordinator, invite firmado con token (caducidad + `max_uses`), código de unión corto + QR, `pilot join` (admisión vía `/v1/join`, config firmada, sin editar archivos), `pilot status`. Ver `docs/ONE_COMMAND.md`. E2E verificado: 2 rondas completadas.
+- [x] **Dashboard/agente one-click**: tarjeta "Unirse en 1 clic", endpoint `/launch/join` que guarda el token en fichero `0600` para no exponerlo en comandos/logs, errores en lenguaje claro.
+- [x] **Seguridad del flujo**: WIF en archivos `0600`, `.gitignore` para secretos, firma de invite/config, token de un solo uso con caducidad, verificación de firma del worker, sin eco de tokens en mensajes; modelo TOFU documentado.
 - [ ] **Instalación simple**: `make setup` o script único (Python + sidecar + checks), perfiles locales gitignored.
 - [ ] **Imágenes listas**: Docker GPU (CUDA+HF/PEFT+sidecar) y flujos dev/prod claros.
 - [ ] **Descubrimiento LAN opcional** (mDNS) manteniendo modelo BSV+bitbeam para WAN.
-- [ ] **DX**: mejores errores, docs ejecutables, ejemplos por escala.
+- [ ] **DX**: ejemplos por escala y guía interactiva ampliada (la base de errores amigables ya está).
 
 **Criterio:** un nuevo colaborador levanta un run funcional siguiendo pasos mínimos y claros.
 
@@ -155,4 +157,5 @@ Objetivo: convertir la red en infraestructura colaborativa verificable.
 - 2026-11-17 (P2.5, allowlist↔túnel): `diloco/tunnel_allowlist.py` con export atómico/idempotente y validado de la allowlist al peer file (usado por `run_coordinator.py`) + helpers de reconciliación; `tunnel-server-id` ahora derriba conexiones activas al revocar un peer. 5 tests nuevos. Suite 68 OK. Commit `e056271`, desplegado.
 - 2026-11-17 (P2.3, reconexión): 3 tests de re-registro tras sesión perdida, submit ambiguo y reinicio real del coordinador en el mismo puerto; fix: el coordinador sobreescribe checkpoints obsoletos tras reinicio en lugar de fallar. Suite 71 OK. Commit `1e1fda6`, desplegado.
 - 2026-11-17 (P2.4, runbook WAN/NAT): `docs/VALIDACION_WAN_NAT.md` con topología, comandos reales de identity_init/run_coordinator/run_worker, rehearsal local y criterio de aceptación (≥6 rondas, rejoin ≤2 rondas, sin secretos en logs). Ejecución multi-máquina real pendiente de infra/credenciales externas.
+- 2026-11-17 (P6, one-command niveles 1–3 + auditoría): `pilot.py init/up/join/status`, presets, invites firmados con token/caducidad/`max_uses`, `/v1/join` HTTP+gRPC, `/v1/invite`, código corto + QR, dashboard "Unirse en 1 clic" y `/launch/join`, errores amigables. Seguridad: WIF `0600`, secretos gitignoreados, firma de config, sin eco de tokens, modelo TOFU documentado en `docs/ONE_COMMAND.md`. Suite 92 OK + E2E `pilot up`→`pilot join` 2 rondas. Commit `5a504f3`, desplegado.
 - 2026-11-12 (infra reciente): `/v1/public/status`, deploy `didiloco.bsv.direct` (`/var/www/didiloco`, `proxy-net`), auth HTTP Basic/token en dashboard/agente, fixes de deploy y runtime Docker (numpy).

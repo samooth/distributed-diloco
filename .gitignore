@@ -12,3 +12,8 @@ tmp/
 # Local virtual environment
 .venv/
 venv/
+
+# Secrets (never commit)
+deploy/.env
+*.code
+*.invite.json

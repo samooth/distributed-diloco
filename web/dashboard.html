@@ -127,6 +127,21 @@
                 <label class="span-2">Invite (JSON/path)<input id="lw-invite" type="text" placeholder="runs/invite.json" /></label>
               </div>
             </div>
+
+            <div class="launcher-card">
+              <div class="launcher-card-head">
+                <h3>Unirse en 1 clic</h3>
+                <button id="launch-join" class="btn btn-primary btn-sm">Unirse</button>
+              </div>
+              <p class="panel-note">Pega la línea <span class="mono">didiloco://join?...</span> que te dio el coordinador. No editable a mano: identidad, config y allowlist se crean solas.</p>
+              <div class="form-grid">
+                <label class="span-2">Código de unión<textarea id="lj-code" rows="3" placeholder="didiloco://join?h=...&t=..."></textarea></label>
+                <label>Node ID<input id="lj-node-id" type="text" value="worker-0" /></label>
+                <label>Shard ID<input id="lj-shard-id" type="number" value="0" min="0" /></label>
+                <label>Device<input id="lj-device" type="text" value="cpu" /></label>
+                <label class="checkbox span-2"><input id="lj-no-tunnel" type="checkbox" /> Sin túnel (LAN/dev)</label>
+              </div>
+            </div>
           </div>
           <div class="launcher-actions">
             <button id="save-launcher-config" class="btn btn-ghost btn-sm">Guardar configuración</button>

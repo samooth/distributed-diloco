@@ -337,17 +337,13 @@ async function tunnelServer() {
       await addPeerListener(peerPub)
     }
 
-    // If started with only peer files (allowlist not known yet), wait and allow dynamic late join
-    if (listeners.size === 0 && peerFiles.length > 0) {
+    // Allow starting with an empty peer file: the watcher below adds listeners
+    // as workers are admitted (invite flow). Do not block readiness on peers.
+    if (listeners.size === 0 && peerFiles.length === 0) {
+      throw new Error('identity tunnel-server requires --peer-pubkey or --peer-pubkey-file')
+    }
+    if (listeners.size === 0) {
       console.log(JSON.stringify({ event: 'waiting-peers', mode: 'tunnel-server-id', topic, context, transport: 'bitbeam-identity', target: `${targetHost}:${targetPort}`, coordinator_pubkey: id.pubkey }))
-      // poll until at least one peer appears
-      while (listeners.size === 0) {
-        await new Promise((r) => setTimeout(r, 2000))
-        const dynamic = [...effectivePeers()]
-        for (const p of dynamic) await addPeerListener(p)
-      }
-    } else if (listeners.size === 0) {
-      throw new Error('identity tunnel-server requires at least one valid peer pubkey')
     }
 
     console.log(JSON.stringify({ event: 'ready', mode: 'tunnel-server-id', topic, context, transport: 'bitbeam-identity', target: `${targetHost}:${targetPort}`, peers: listeners.size, coordinator_pubkey: id.pubkey }))

@@ -7,6 +7,7 @@ import json
 import logging
 import shutil
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -46,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-pubkey-file", action="append", default=[], help="file with allowed pubkeys (one per line or JSON list)")
     parser.add_argument("--require-node-identity", action="store_true")
     parser.add_argument("--print-invite", default="", help="write a signed join invite JSON to this path and exit after startup info is ready")
+    parser.add_argument("--join-token", default="", help="invite join token (generated automatically if empty and --print-invite is used)")
+    parser.add_argument("--join-max-uses", type=int, default=2, help="max workers that may join with one invite (default: 2)")
+    parser.add_argument("--join-ttl-s", type=int, default=3600, help="invite validity in seconds (default: 3600)")
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -70,9 +74,12 @@ def _build_invite(cfg, coordinator, port: int, args, coord_identity: str, p2p_co
         "base_hash": str(getattr(coordinator, "base_hash", "") or ""),
         "transport": cfg.coordinator.transport,
         "endpoint": f"http://{cfg.coordinator.host}:{port}",
-        "expires_at": int(_time.time()) + 24 * 3600,
+        "expires_at": int(_time.time()) + max(60, int(getattr(args, "join_ttl_s", 3600))),
         "allowed_node_pubkeys": list(cfg.coordinator.allowed_node_pubkeys or []),
         "require_node_identity": bool(cfg.coordinator.require_node_identity),
+        "join_token": str(getattr(args, "join_token", "") or ""),
+        "max_uses": max(1, int(getattr(args, "join_max_uses", 2))),
+        "config_json": json.dumps(cfg.to_dict(), sort_keys=True, separators=(",", ":")),
     }
     if coord_identity and coord_pubkey:
         try:
@@ -190,6 +197,21 @@ def main() -> int:
             state, base_hash, adapter_meta = initial_adapter_state(cfg, device=args.device)
         coordinator = Coordinator(cfg, state, base_hash, adapter_meta)
 
+    # Invite-based admission: configure the token on the coordinator so workers
+    # can self-register without anyone editing an allowlist file by hand.
+    if args.print_invite:
+        if not getattr(args, "join_token", ""):
+            import secrets
+
+            args.join_token = secrets.token_urlsafe(24)
+        coordinator.configure_join_token(
+            args.join_token,
+            max_uses=int(getattr(args, "join_max_uses", 2)),
+            expires_at=time.time() + max(60, int(getattr(args, "join_ttl_s", 3600))),
+            config_hash=cfg.fingerprint(),
+            base_hash=base_hash,
+        )
+
     port = coordinator.start()
     print(f"PORT={port}", flush=True)
     print(f"COORDINATOR_URL=http://{cfg.coordinator.host}:{port}", flush=True)
@@ -216,9 +238,11 @@ def main() -> int:
         logging.info("announcing coordinator on Hyperswarm topic %s", args.announce_topic)
     if args.p2p_topic:
         peer_pubkeys = list(cfg.coordinator.allowed_node_pubkeys or [])
-        if coord_identity and peer_pubkeys:
+        if coord_identity:
             # Export effective allowlist atomically/idempotently so the identity
-            # tunnel can hot-add/revoke peers from file updates (P2.5).
+            # tunnel can hot-add/revoke peers from file updates (P2.5). The peer
+            # list may be empty at startup: workers are admitted later via
+            # signed invites and added to this file automatically.
             peer_file = checkpoint_dir / "allowed_peer_pubkeys.txt"
             try:
                 write_peer_allowlist(peer_file, peer_pubkeys)
@@ -244,8 +268,6 @@ def main() -> int:
                 len(peer_pubkeys), p2p_context, peer_file,
             )
         else:
-            if coord_identity and not peer_pubkeys:
-                logging.warning("--coordinator-identity set but no allowed peer pubkeys; falling back to topic tunnel")
             tunnel = HolepunchSidecar(
                 mode="tunnel-server",
                 topic=args.p2p_topic,
@@ -261,6 +283,7 @@ def main() -> int:
     if args.print_invite:
         try:
             invite = _build_invite(cfg, coordinator, port, args, coord_identity, p2p_context)
+            coordinator.set_invite(invite)
             out = args.print_invite
             text = json.dumps(invite, indent=2, sort_keys=True)
             if out == "-":
@@ -277,8 +300,6 @@ def main() -> int:
     if args.no_wait:
         try:
             while True:
-                import time
-
                 time.sleep(1)
         except KeyboardInterrupt:
             for item in sidecars:

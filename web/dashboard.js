@@ -706,6 +706,37 @@ $("launch-worker")?.addEventListener("click", async () => {
   }
 });
 
+$("launch-join")?.addEventListener("click", async () => {
+  const code = ($("lj-code")?.value || "").trim();
+  const nodeId = ($("lj-node-id")?.value || "worker-0").trim();
+  if (!code.startsWith("didiloco:")) {
+    const msg = "Pega una línea de unión válida (didiloco://join?...)";
+    toast(msg, "err", 4000); log(msg, "err"); return;
+  }
+  if (!/^[A-Za-z0-9._:-]+$/.test(nodeId)) {
+    const msg = "Node ID contiene caracteres no recomendados";
+    toast(msg, "err", 4000); log(msg, "err"); return;
+  }
+  const payload = {
+    code,
+    node_id: nodeId,
+    shard_id: Math.max(0, getNum("lj-shard-id", 0)),
+    device: getVal("lj-device") || "cpu",
+    no_tunnel: Boolean($("lj-no-tunnel")?.checked),
+  };
+  if (!window.confirm(`¿Unirse al run con ${nodeId}? (identidad/config se crean automáticamente)`)) return;
+  try {
+    const r = await agentFetch("/launch/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    log(`Unión lanzada: ${r.id} (${nodeId}) · token guardado en ${r.code_file || 'archivo protegido'}`, "info");
+    toast(`Uniéndose como ${nodeId}`, "info");
+    refreshProcs();
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    log(`Error al unirse: ${msg}`, "err");
+    toast(`Error al unirse: ${msg}`, "err", 5000);
+  }
+});
+
 $("refresh-procs")?.addEventListener("click", refreshProcs);
 $("toggle-launcher-config")?.addEventListener("click", () => {
   const panel = $("launcher-config");

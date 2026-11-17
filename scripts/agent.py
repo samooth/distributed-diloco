@@ -270,6 +270,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"id": pid, "cmd": cmd})
             return
 
+        if self.path == "/launch/join":
+            code = str(payload.get("code", "") or "").strip()
+            node_id = str(payload.get("node_id", "worker-0") or "worker-0")
+            shard_id = int(payload.get("shard_id", 0) or 0)
+            device = str(payload.get("device", "cpu") or "cpu")
+            if not code.startswith("didiloco:"):
+                self._send(400, {"error": "código de unión no válido"})
+                return
+            # Keep the bearer token out of the process command line and logs:
+            # store the code in a 0600 file and pass its path to pilot.py.
+            agent_dir = PROJECT_ROOT / "runs" / "agent"
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            code_path = agent_dir / f"join-{int(time.time() * 1000)}.code"
+            fd = os.open(str(code_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, (code + "\n").encode("utf-8"))
+            finally:
+                os.close(fd)
+            cmd = [PYTHON, "scripts/pilot.py", "join", str(code_path),
+                   "--node-id", node_id, "--shard-id", str(shard_id), "--device", device,
+                   "--out-dir", str(agent_dir / f"join-{node_id}")]
+            if payload.get("no_tunnel"):
+                cmd.append("--no-tunnel")
+            log_path = agent_dir / f"join-{node_id}-{int(time.time())}.log"
+            pid = _launch(cmd, log_path)
+            self._send(200, {"id": pid, "cmd": cmd, "code_file": str(code_path)})
+            return
+
         if self.path == "/stop":
             pid = payload.get("id")
             with LOCK:

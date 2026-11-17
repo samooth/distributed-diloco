@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,11 @@ def main() -> int:
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr or proc.stdout)
         return proc.returncode
+    # The file contains the WIF: never leave it world-readable.
+    try:
+        os.chmod(out, 0o600)
+    except Exception:
+        pass
     try:
         print(proc.stdout.strip())
     except Exception:
